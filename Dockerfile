@@ -1,9 +1,10 @@
 FROM eclipse-temurin:21-alpine AS build
 
 WORKDIR /build/
-#COPY build.gradle.kts settings.gradle.kts gradlew /app/
-#COPY gradle /app/gradle/
-#RUN ./gradlew build || return 0
+COPY build.gradle.kts settings.gradle.kts gradlew /app/
+COPY gradle /app/gradle/
+
+RUN ./gradlew assemble || return 0
 COPY . .
 RUN ./gradlew clean assemble
 
