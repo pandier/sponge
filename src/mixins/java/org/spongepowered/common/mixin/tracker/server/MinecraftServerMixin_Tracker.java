@@ -63,7 +63,7 @@ public abstract class MinecraftServerMixin_Tracker extends BlockableEventLoopMix
 
     @Inject(method = "tickServer", at = @At("RETURN"))
     private void tracker$ensurePhaseTrackerEmpty(final BooleanSupplier hasTimeLeft, final CallbackInfo ci) {
-        PhaseTracker.SERVER.ensureEmpty();
+        PhaseTracker.getServerInstanceExplicitly().ensureEmpty();
     }
 
     @Redirect(
@@ -76,7 +76,7 @@ public abstract class MinecraftServerMixin_Tracker extends BlockableEventLoopMix
     private void tracker$wrapUpdateTimeLightAndEntities(final MinecraftServer minecraftServer, final BooleanSupplier hasTimeLeft) {
         try (
             final PhaseContext<@NonNull ?> context = TickPhase.Tick.SERVER_TICK
-                .createPhaseContext(PhaseTracker.SERVER)
+                .createPhaseContext(PhaseTracker.getServerInstanceExplicitly())
                 .server(minecraftServer)
         ) {
             context.buildAndSwitch();
@@ -94,7 +94,7 @@ public abstract class MinecraftServerMixin_Tracker extends BlockableEventLoopMix
     private void tracker$wrapWorldTick(final ServerLevel serverWorld, final BooleanSupplier hasTimeLeft) {
         try (
             final PhaseContext<@NonNull ?> context = TickPhase.Tick.WORLD_TICK
-                .createPhaseContext(PhaseTracker.SERVER)
+                .createPhaseContext(PhaseTracker.getWorldInstance(serverWorld))
                 .world(serverWorld)
         ) {
             context.buildAndSwitch();
@@ -104,7 +104,7 @@ public abstract class MinecraftServerMixin_Tracker extends BlockableEventLoopMix
 
     @Inject(method = "wrapRunnable(Ljava/lang/Runnable;)Lnet/minecraft/server/TickTask;", at = @At("RETURN"))
     private void tracker$associatePhaseContextWithWrappedTask(final Runnable runnable, final CallbackInfoReturnable<TickTask> cir) {        final TickTask returnValue = cir.getReturnValue();
-        if (!PhaseTracker.SERVER.onSidedThread()) {
+        if (!PhaseTracker.getServerInstanceExplicitly().onSidedThread()) {
             final PhaseContext<@NonNull ?> phaseContext = PhaseTracker.getInstance().getPhaseContext();
             if (phaseContext.isEmpty()) {
                 return;
@@ -122,7 +122,7 @@ public abstract class MinecraftServerMixin_Tracker extends BlockableEventLoopMix
     )
     @SuppressWarnings("unchecked")
     private void tracker$wrapAndPerformContextSwitch(final ReentrantBlockableEventLoop<?> thisServer, final Runnable runnable) {
-        try (final PhaseContext<@NonNull ?> context = PluginPhase.State.DELAYED_TASK.createPhaseContext(PhaseTracker.SERVER)
+        try (final PhaseContext<@NonNull ?> context = PluginPhase.State.DELAYED_TASK.createPhaseContext(PhaseTracker.getServerInstanceExplicitly())
             .source(runnable)
             .setDelayedContextPopulator(((TickTaskBridge) runnable).bridge$getFrameModifier().orElse(null))
         ) {

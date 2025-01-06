@@ -33,7 +33,6 @@ import net.minecraft.world.entity.ai.village.poi.PoiManager;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.LevelChunk;
-import net.minecraft.world.level.chunk.storage.ChunkSerializer;
 import org.spongepowered.api.ResourceKey;
 import org.spongepowered.api.event.SpongeEventFactory;
 import org.spongepowered.api.event.world.chunk.ChunkEvent;
@@ -68,6 +67,7 @@ import org.spongepowered.common.world.level.chunk.storage.SpongeIOWorkerType;
 import org.spongepowered.math.vector.Vector3i;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
 
 @Mixin(ChunkMap.class)
 public abstract class ChunkMapMixin implements ChunkMapBridge {
@@ -99,26 +99,15 @@ public abstract class ChunkMapMixin implements ChunkMapBridge {
     }
 
     @Redirect(method = "save", at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/world/level/chunk/storage/ChunkSerializer;write(Lnet/minecraft/server/level/ServerLevel;"
-                    + "Lnet/minecraft/world/level/chunk/ChunkAccess;)Lnet/minecraft/nbt/CompoundTag;"))
-    private CompoundTag impl$useSerializationBehaviorForChunkSave(final ServerLevel worldIn, final ChunkAccess chunkIn) {
+            target = "Lnet/minecraft/server/level/ChunkMap;write(Lnet/minecraft/world/level/ChunkPos;Ljava/util/function/Supplier;)Ljava/util/concurrent/CompletableFuture;"))
+    private CompletableFuture<Void> impl$doNotWriteIfWeHaveNoData(final ChunkMap chunkManager, final ChunkPos pos, final Supplier<CompoundTag> compound) {
         final PrimaryLevelDataBridge infoBridge = (PrimaryLevelDataBridge) this.level.getLevelData();
         final SerializationBehavior serializationBehavior = infoBridge.bridge$serializationBehavior().orElse(SerializationBehavior.AUTOMATIC);
         if (serializationBehavior == SerializationBehavior.AUTOMATIC || serializationBehavior == SerializationBehavior.MANUAL) {
-            return ChunkSerializer.write(worldIn, chunkIn);
+            return chunkManager.write(pos, compound);
         }
 
-        return null;
-    }
-
-    @Redirect(method = "save", at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/server/level/ChunkMap;write(Lnet/minecraft/world/level/ChunkPos;Lnet/minecraft/nbt/CompoundTag;)Ljava/util/concurrent/CompletableFuture;"))
-    private CompletableFuture<Void> impl$doNotWriteIfWeHaveNoData(final ChunkMap chunkManager, final ChunkPos pos, final CompoundTag compound) {
-        if (compound == null) {
-            return CompletableFuture.completedFuture(null);
-        }
-
-        return chunkManager.write(pos, compound);
+        return CompletableFuture.completedFuture(null);
     }
 
     @Redirect(method = "lambda$scheduleUnload$12",
@@ -128,14 +117,6 @@ public abstract class ChunkMapMixin implements ChunkMapBridge {
             )
     )
     private void impl$onSetUnloaded(final ServerLevel level, final LevelChunk chunk) {
-        final Vector3i chunkPos = VecHelper.toVector3i(chunk.getPos());
-
-        if (ShouldFire.CHUNK_EVENT_UNLOAD_PRE) {
-            final ChunkEvent.Unload event = SpongeEventFactory.createChunkEventUnloadPre(PhaseTracker.getInstance().currentCause(),
-                (WorldChunk) chunk, chunkPos, (ResourceKey) (Object) this.level.dimension().location());
-            SpongeCommon.post(event);
-        }
-
         level.unload(chunk);
 
         for (final Direction dir : Constants.Chunk.CARDINAL_DIRECTIONS) {
@@ -146,12 +127,6 @@ public abstract class ChunkMapMixin implements ChunkMapBridge {
                 ((LevelChunkBridge) chunk).bridge$setNeighborChunk(index, null);
                 ((LevelChunkBridge) neighbor).bridge$setNeighborChunk(oppositeIndex, null);
             }
-        }
-
-        if (ShouldFire.CHUNK_EVENT_UNLOAD_POST) {
-            final ChunkEvent.Unload event = SpongeEventFactory.createChunkEventUnloadPost(PhaseTracker.getInstance().currentCause(), chunkPos,
-                (ResourceKey) (Object) this.level.dimension().location());
-            SpongeCommon.post(event);
         }
     }
 

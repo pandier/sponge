@@ -27,22 +27,33 @@ package org.spongepowered.common.mixin.core.server.level;
 import net.minecraft.Util;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
+import net.minecraft.core.particles.ParticleOptions;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientboundExplodePacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.bossevents.CustomBossEvents;
 import net.minecraft.server.level.ServerChunkCache;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.TicketType;
 import net.minecraft.server.level.progress.ChunkProgressListener;
+import net.minecraft.server.network.ServerGamePacketListenerImpl;
+import net.minecraft.server.players.PlayerList;
+import net.minecraft.sounds.SoundEvents;
 import net.minecraft.util.ProgressListener;
 import net.minecraft.world.RandomSequences;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.ai.village.poi.PoiManager;
 import net.minecraft.world.entity.ai.village.poi.PoiType;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.ServerExplosion;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.JukeboxBlockEntity;
@@ -50,8 +61,8 @@ import net.minecraft.world.level.block.entity.TickingBlockEntity;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.dimension.LevelStem;
 import net.minecraft.world.level.dimension.end.EndDragonFight;
+import net.minecraft.world.level.entity.PersistentEntitySectionManager;
 import net.minecraft.world.level.gameevent.GameEvent;
-import net.minecraft.world.level.levelgen.WorldOptions;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.storage.LevelStorageSource;
 import net.minecraft.world.level.storage.PrimaryLevelData;
@@ -127,16 +138,18 @@ public abstract class ServerLevelMixin extends LevelMixin implements ServerLevel
 
     // @formatter:off
     @Shadow @Final private ServerLevelData serverLevelData;
+    @Shadow @Final private PersistentEntitySectionManager<Entity> entityManager;
     @Shadow @Final private LevelTicks<Block> blockTicks;
     @Shadow @Final private LevelTicks<Fluid> fluidTicks;
     @Shadow private int emptyTime;
 
     @Shadow @NonNull public abstract MinecraftServer shadow$getServer();
-    @Shadow protected abstract void shadow$saveLevelData();
+    @Shadow protected abstract void shadow$saveLevelData(final boolean $$0);
     @Shadow @Final private MinecraftServer server;
 
     @Shadow public abstract void levelEvent(@Nullable Player $$0, int $$1, BlockPos $$2, int $$3);
     @Shadow @Nullable private EndDragonFight dragonFight;
+    @Shadow @Final private List<ServerPlayer> players;
 
     // @formatter:on
 
@@ -157,8 +170,8 @@ public abstract class ServerLevelMixin extends LevelMixin implements ServerLevel
         this.impl$levelSave = $$2;
         this.impl$chunkStatusListener = $$6;
         this.impl$prevWeather = ((ServerWorld) this).weather();
-        ((LevelTicksBridge<?>) this.blockTicks).bridge$setGameTimeSupplier(this.levelData::getGameTime);
-        ((LevelTicksBridge<?>) this.fluidTicks).bridge$setGameTimeSupplier(this.levelData::getGameTime);
+        ((LevelTicksBridge<?>) this.blockTicks).bridge$level((ServerLevel) (Object) this);
+        ((LevelTicksBridge<?>) this.fluidTicks).bridge$level((ServerLevel) (Object) this);
 
         final Boolean createDragonFight = ((DimensionTypeBridge) (Object) this.shadow$dimensionType()).bridge$createDragonFight();
         if (createDragonFight != null) {
@@ -169,11 +182,6 @@ public abstract class ServerLevelMixin extends LevelMixin implements ServerLevel
                 this.dragonFight = null;
             }
         }
-    }
-
-    @Redirect(method = "getSeed", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/storage/WorldData;worldGenOptions()Lnet/minecraft/world/level/levelgen/WorldOptions;"))
-    public WorldOptions impl$onGetSeed(final WorldData iServerConfiguration) {
-        return ((PrimaryLevelData) this.serverLevelData).worldGenOptions();
     }
 
     @Override
@@ -229,40 +237,55 @@ public abstract class ServerLevelMixin extends LevelMixin implements ServerLevel
 
     @Override
     public void bridge$triggerExplosion(Explosion explosion) {
-        // Sponge start
         // Set up the pre event
+        final PhaseTracker phaseTracker = PhaseTracker.getWorldInstance((ServerLevel) (Object) this);
         if (ShouldFire.EXPLOSION_EVENT_PRE) {
-            final ExplosionEvent.Pre
-                    event =
-                    SpongeEventFactory.createExplosionEventPre(PhaseTracker.getCauseStackManager().currentCause(),
-                            explosion, (org.spongepowered.api.world.server.ServerWorld) this);
+            final var cause = phaseTracker.currentCause();
+            final ExplosionEvent.Pre event = SpongeEventFactory.createExplosionEventPre(cause, explosion, (ServerWorld) this);
             if (SpongeCommon.post(event)) {
                 return;
             }
             explosion = event.explosion();
         }
 
-        final net.minecraft.world.level.Explosion mcExplosion = (net.minecraft.world.level.Explosion) explosion;
+        final ServerExplosion mcExplosion = (ServerExplosion) explosion;
 
-        try (final PhaseContext<?> ignored = GeneralPhase.State.EXPLOSION.createPhaseContext(PhaseTracker.SERVER)
-                .explosion((net.minecraft.world.level.Explosion) explosion)
+        try (final PhaseContext<?> ignored = GeneralPhase.State.EXPLOSION.createPhaseContext(phaseTracker)
+                .explosion(mcExplosion)
                 .source(explosion.sourceExplosive().isPresent() ? explosion.sourceExplosive() : this)) {
             ignored.buildAndSwitch();
-            final boolean shouldBreakBlocks = explosion.shouldBreakBlocks();
-            // Sponge End
 
             mcExplosion.explode();
-            mcExplosion.finalizeExplosion(explosion.shouldPlaySmoke());
 
-            if (!shouldBreakBlocks) {
-                mcExplosion.clearToBlow();
+            // see ServerLevel#explode/Level#explode
+            ParticleOptions particle = mcExplosion.isSmall() ? ParticleTypes.EXPLOSION : ParticleTypes.EXPLOSION_EMITTER;
+            var sound = SoundEvents.GENERIC_EXPLODE;
+            for (ServerPlayer player : this.players) {
+                if (player.distanceToSqr(mcExplosion.center()) < 4096.0) {
+                    Optional<Vec3> kb = Optional.ofNullable(mcExplosion.getHitPlayers().get(player));
+                    final var packet = new ClientboundExplodePacket(mcExplosion.center(), kb, particle, sound);
+                    this.bridge$handleExplosionPacket(player.connection, explosion, packet);
+                    player.connection.send(packet);
+                }
             }
-
-            // Sponge Start - end processing
         }
-        // Sponge End
     }
 
+    @Override
+    public void bridge$handleExplosionPacket(final ServerGamePacketListenerImpl instance, Explosion apiExplosion,
+        final ClientboundExplodePacket packet) {
+        if (apiExplosion.shouldPlaySmoke()) {
+            // TODO no sound?
+            // TODO control which particle is used (API)
+            // TODO control sound? (ViewerPacketUtil.resolveEvent)
+            var newPacket = new ClientboundExplodePacket(packet.center(), packet.playerKnockback(), packet.explosionParticle(), packet.explosionSound());
+            instance.send(newPacket);
+        }
+        else {
+            packet.playerKnockback().ifPresent(kb -> instance.send(new ClientboundSetEntityMotionPacket(instance.player.getId(), kb)));
+            // TODO play sound?
+        }
+    }
     @Override
     public void bridge$setManualSave(final boolean state) {
         this.impl$isManualSave = state;
@@ -305,8 +328,14 @@ public abstract class ServerLevelMixin extends LevelMixin implements ServerLevel
         return this.impl$recentTickTimes;
     }
 
-    @Redirect(method = "saveLevelData", at = @At(value = "INVOKE", target = "Lnet/minecraft/server/MinecraftServer;getWorldData()Lnet/minecraft/world/level/storage/WorldData;"))
-    private WorldData impl$usePerWorldLevelDataForDragonFight(final MinecraftServer server) {
+    @Redirect(method = {
+        "saveLevelData",
+        "findNearestMapStructure",
+        "isFlat",
+        "getSeed",
+        "enabledFeatures"
+    }, at = @At(value = "INVOKE", target = "Lnet/minecraft/server/MinecraftServer;getWorldData()Lnet/minecraft/world/level/storage/WorldData;"))
+    private WorldData impl$usePerWorldLevelData(final MinecraftServer server) {
         return (WorldData) this.shadow$getLevelData();
     }
 
@@ -350,7 +379,7 @@ public abstract class ServerLevelMixin extends LevelMixin implements ServerLevel
             // We always save the metadata unless it is NONE
             if (behavior != SerializationBehavior.NONE) {
 
-                this.shadow$saveLevelData();
+                this.shadow$saveLevelData(flush);
 
                 // Sponge Start - We do per-world WorldInfo/WorldBorders/BossBars
 
@@ -370,6 +399,12 @@ public abstract class ServerLevelMixin extends LevelMixin implements ServerLevel
 
             if (behavior == SerializationBehavior.AUTOMATIC || (isManualSave && behavior == SerializationBehavior.MANUAL)) {
                 chunkProvider.save(flush);
+            }
+
+            if (flush) {
+                this.entityManager.saveAll();
+            } else {
+                this.entityManager.autoSave();
             }
 
             Sponge.eventManager().post(SpongeEventFactory.createSaveWorldEventPost(currentCause, ((ServerWorld) this)));
@@ -449,7 +484,7 @@ public abstract class ServerLevelMixin extends LevelMixin implements ServerLevel
     @Inject(method = "globalLevelEvent", at = @At("HEAD"), cancellable = true)
     private void impl$throwBroadcastGlobalEvent(int effectID, BlockPos pos, int pitch, CallbackInfo ci) {
         if (!this.bridge$isFake() && ShouldFire.PLAY_SOUND_EVENT_BROADCAST) {
-            try (final CauseStackManager.StackFrame frame = PhaseTracker.SERVER.pushCauseFrame()) {
+            try (final CauseStackManager.StackFrame frame = PhaseTracker.getWorldInstance((ServerLevel) (Object) this).pushCauseFrame()) {
                 final PlaySoundEvent.Broadcast event = SpongeCommonEventFactory.callPlaySoundBroadcastEvent(frame, this, pos, effectID);
                 if (event != null && event.isCancelled()) {
                     ci.cancel();
@@ -492,7 +527,7 @@ public abstract class ServerLevelMixin extends LevelMixin implements ServerLevel
         }
     }
 
-    @Redirect(method = "lambda$onBlockStateChange$13",
+    @Redirect(method = "lambda$onBlockStateChange$14",
         at = @At(
             value = "INVOKE",
             target = "Lnet/minecraft/world/entity/ai/village/poi/PoiManager;add(Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/Holder;)V"
@@ -531,10 +566,20 @@ public abstract class ServerLevelMixin extends LevelMixin implements ServerLevel
 
     @Override
     public String toString() {
-        final Optional<ResourceKey> worldTypeKey = Optional.ofNullable(this.server.registryAccess().registryOrThrow(Registries.DIMENSION_TYPE).getKey(this.shadow$dimensionType())).map(ResourceKey.class::cast);
+        final Optional<ResourceKey> worldTypeKey = Optional.ofNullable(this.server.registryAccess().lookupOrThrow(Registries.DIMENSION_TYPE).getKey(this.shadow$dimensionType())).map(ResourceKey.class::cast);
         return new StringJoiner(",", ServerLevel.class.getSimpleName() + "[", "]")
                 .add("key=" + this.shadow$dimension())
                 .add("worldType=" + worldTypeKey.map(ResourceKey::toString).orElse("inline"))
                 .toString();
+    }
+
+    @Redirect(method = {
+        "advanceWeatherCycle",
+        "globalLevelEvent",
+        "setDefaultSpawnPos"
+    }, at = @At(value = "INVOKE", target = "Lnet/minecraft/server/players/PlayerList;broadcastAll(Lnet/minecraft/network/protocol/Packet;)V"))
+    private void impl$broadcastAllCurrentDimensionOnly(final PlayerList instance, final Packet<?> $$0) {
+        //Weather, game rules and spawns are per world in Sponge.
+        instance.broadcastAll($$0, this.shadow$dimension());
     }
 }

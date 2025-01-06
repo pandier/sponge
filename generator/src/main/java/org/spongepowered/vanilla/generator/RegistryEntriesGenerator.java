@@ -28,6 +28,7 @@ import com.squareup.javapoet.FieldSpec;
 import com.squareup.javapoet.MethodSpec;
 import com.squareup.javapoet.ParameterizedTypeName;
 import com.squareup.javapoet.TypeName;
+import net.minecraft.core.Holder;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceKey;
@@ -121,9 +122,9 @@ class RegistryEntriesGenerator<V> implements Generator {
         clazz.addAnnotation(Types.suppressWarnings("unused"));
 
         final RegistryScope scopeType;
-        Registry<V> registry = (Registry<V>) BuiltInRegistries.REGISTRY.get(this.registry.location());
+        Registry<V> registry = (Registry<V>) BuiltInRegistries.REGISTRY.get(this.registry.location()).map(Holder.Reference::value).orElse(null);
         if (registry == null) {
-            registry = ctx.registries().registry(this.registry).orElse(null);
+            registry = ctx.registries().lookup(this.registry).orElse(null);
             if (registry == null) {
                 throw new IllegalArgumentException("Unknown registry " + this.registry);
             }
@@ -160,7 +161,7 @@ class RegistryEntriesGenerator<V> implements Generator {
             if (!featureFlagSet.isSubsetOf(FeatureFlags.VANILLA_SET)) {
                 final var flags = FeatureFlags.REGISTRY.toNames(featureFlagSet).stream().map(rl -> rl.getNamespace().equals("minecraft") ? rl.getPath() : rl.getNamespace() + ":" + rl.getPath()).toArray();
                 // Use this when new feature flags are introduced
-//                if (featureFlagSet.contains(FeatureFlags.UPDATE_1_20)) {
+//                if (featureFlagSet.contains(FeatureFlags.WINTER_DROP)) {
 //                    var annotation = AnnotationSpec.builder(ClassName.get("org.spongepowered.api.util.annotation", "Experimental"))
 //                            .addMember("value", "$S", flags).build();
 //                    builder.addAnnotation(annotation).build();

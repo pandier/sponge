@@ -39,6 +39,9 @@ import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.UpgradeData;
+import net.minecraft.world.level.entity.EntitySection;
+import net.minecraft.world.level.entity.EntitySectionStorage;
+import net.minecraft.world.level.entity.PersistentEntitySectionManager;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.blending.BlendingData;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -71,7 +74,9 @@ import org.spongepowered.asm.mixin.Interface;
 import org.spongepowered.asm.mixin.Intrinsic;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.common.accessor.server.level.ServerLevelAccessor;
 import org.spongepowered.common.accessor.world.level.LevelAccessor;
+import org.spongepowered.common.accessor.world.level.entity.PersistentEntitySectionManagerAccessor;
 import org.spongepowered.common.bridge.world.level.LevelBridge;
 import org.spongepowered.common.bridge.world.level.chunk.LevelChunkBridge;
 import org.spongepowered.common.data.holder.SpongeServerLocationBaseDataHolder;
@@ -100,7 +105,6 @@ import java.util.UUID;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import java.util.stream.StreamSupport;
 
 @Mixin(net.minecraft.world.level.chunk.LevelChunk.class)
 @Implements(@Interface(iface = WorldChunk.class, prefix = "worldChunk$", remap = Interface.Remap.NONE))
@@ -129,7 +133,7 @@ public abstract class LevelChunkMixin_API extends ChunkAccess implements WorldCh
         return PaletteWrapper.of(
             PaletteTypes.BLOCK_STATE_PALETTE.get(),
             Block.BLOCK_STATE_REGISTRY,
-            (org.spongepowered.api.registry.Registry<BlockType>) this.level.registryAccess().registry(Registries.BLOCK).get()
+            (org.spongepowered.api.registry.Registry<BlockType>) this.level.registryAccess().lookupOrThrow(Registries.BLOCK)
         );
     }
 
@@ -143,7 +147,7 @@ public abstract class LevelChunkMixin_API extends ChunkAccess implements WorldCh
 
     @Override
     public boolean setBiome(final int x, final int y, final int z, final Biome biome) {
-        return VolumeStreamUtils.setBiomeOnNativeChunk(x, y, z, biome, () -> this.getSection(this.getSectionIndex(y)), () -> this.setUnsaved(true));
+        return VolumeStreamUtils.setBiomeOnNativeChunk(x, y, z, biome, () -> this.getSection(this.getSectionIndex(y)), this::markUnsaved);
     }
 
     @Intrinsic
@@ -339,7 +343,7 @@ public abstract class LevelChunkMixin_API extends ChunkAccess implements WorldCh
         final Vector3i size = max.sub(min).add(1, 1 ,1);
         final @MonotonicNonNull ObjectArrayMutableBiomeBuffer backingVolume;
         if (shouldCarbonCopy) {
-            final Registry<net.minecraft.world.level.biome.Biome> biomeRegistry = this.level.registryAccess().registryOrThrow(Registries.BIOME);
+            final Registry<net.minecraft.world.level.biome.Biome> biomeRegistry = this.level.registryAccess().lookupOrThrow(Registries.BIOME);
             backingVolume = new ObjectArrayMutableBiomeBuffer(min, size, VolumeStreamUtils.nativeToSpongeRegistry(biomeRegistry));
         } else {
             backingVolume = null;
@@ -377,7 +381,7 @@ public abstract class LevelChunkMixin_API extends ChunkAccess implements WorldCh
     public Vector3i min() {
         if (this.api$blockMin == null) {
             if (this.api$chunkLayout == null) {
-                this.api$chunkLayout = new SpongeChunkLayout(this.level.getMinBuildHeight(), this.level.getHeight());
+                this.api$chunkLayout = new SpongeChunkLayout(this.level.getMinY(), this.level.getHeight());
             }
             this.api$blockMin = this.api$chunkLayout.forceToWorld(this.chunkPosition());
         }
@@ -388,7 +392,7 @@ public abstract class LevelChunkMixin_API extends ChunkAccess implements WorldCh
     public Vector3i max() {
         if (this.api$blockMax == null) {
             if (this.api$chunkLayout == null) {
-                this.api$chunkLayout = new SpongeChunkLayout(this.level.getMinBuildHeight(), this.level.getHeight());
+                this.api$chunkLayout = new SpongeChunkLayout(this.level.getMinY(), this.level.getHeight());
             }
             this.api$blockMax = this.min().add(this.api$chunkLayout.chunkSize()).sub(1, 1, 1);
         }
@@ -398,7 +402,7 @@ public abstract class LevelChunkMixin_API extends ChunkAccess implements WorldCh
     @Override
     public Vector3i size() {
         if (this.api$chunkLayout == null) {
-            this.api$chunkLayout = new SpongeChunkLayout(this.level.getMinBuildHeight(), this.level.getHeight());
+            this.api$chunkLayout = new SpongeChunkLayout(this.level.getMinY(), this.level.getHeight());
         }
         return this.api$chunkLayout.chunkSize();
     }
@@ -418,12 +422,12 @@ public abstract class LevelChunkMixin_API extends ChunkAccess implements WorldCh
                 .filter(x -> x.chunkPosition().equals(this.chunkPos));
     }
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"rawtypes", "unchecked"})
     @Override
     public Collection<? extends Entity> entities() {
-        return (Collection<? extends Entity>) (Object) StreamSupport.stream(
-                ((LevelAccessor) this.level).invoker$getEntities().getAll().spliterator(), false)
-                    .collect(Collectors.toList());
+        final PersistentEntitySectionManager<net.minecraft.world.entity.Entity> entityManager = ((ServerLevelAccessor) this.level).accessor$getEntityManager();
+        final EntitySectionStorage<net.minecraft.world.entity.Entity> entitySectionStorage = ((PersistentEntitySectionManagerAccessor<net.minecraft.world.entity.Entity>) entityManager).accessor$sectionStorage();
+        return (Collection) entitySectionStorage.getExistingSectionsInChunk(this.chunkPos.toLong()).flatMap(EntitySection::getEntities).toList();
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})

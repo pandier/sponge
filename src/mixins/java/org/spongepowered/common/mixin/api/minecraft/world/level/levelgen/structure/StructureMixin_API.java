@@ -30,6 +30,7 @@ import com.mojang.serialization.JsonOps;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderSet;
 import net.minecraft.core.SectionPos;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.RegistryOps;
 import net.minecraft.server.level.ServerChunkCache;
 import net.minecraft.server.level.ServerLevel;
@@ -73,8 +74,20 @@ public abstract class StructureMixin_API implements org.spongepowered.api.world.
         // see PlaceCommand#placeStructure
         final ServerLevel level = (ServerLevel) world;
         final ServerChunkCache chunkSource = level.getChunkSource();
-        final StructureStart start = ((Structure) (Object) this).generate(level.registryAccess(), chunkSource.getGenerator(), chunkSource.getGenerator().getBiomeSource(),
-                        chunkSource.randomState(), level.getStructureManager(), level.getSeed(), new ChunkPos(VecHelper.toBlockPos(pos)), 0, level, b -> true);
+        final var key = level.registryAccess().lookupOrThrow(Registries.STRUCTURE).wrapAsHolder((Structure) (Object) this);
+        final StructureStart start = ((Structure) (Object) this).generate(
+            key,
+            level.dimension(),
+            level.registryAccess(),
+            chunkSource.getGenerator(),
+            chunkSource.getGenerator().getBiomeSource(),
+            chunkSource.randomState(),
+            level.getStructureManager(),
+            level.getSeed(),
+            new ChunkPos(VecHelper.toBlockPos(pos)),
+            0,
+            level,
+            ignored -> true);
 
         if (!start.isValid()) {
             return false;
@@ -87,7 +100,7 @@ public abstract class StructureMixin_API implements org.spongepowered.api.world.
             return false;
         }
         ChunkPos.rangeClosed(minPos, maxPos).forEach((chunkPos) -> start.placeInChunk(level, level.structureManager(), chunkSource.getGenerator(), level.getRandom(),
-                new BoundingBox(chunkPos.getMinBlockX(), level.getMinBuildHeight(), chunkPos.getMinBlockZ(), chunkPos.getMaxBlockX(), level.getMaxBuildHeight(), chunkPos.getMaxBlockZ()), chunkPos));
+                new BoundingBox(chunkPos.getMinBlockX(), level.getMinY(), chunkPos.getMinBlockZ(), chunkPos.getMaxBlockX(), level.getMaxY(), chunkPos.getMaxBlockZ()), chunkPos));
         return true;
     }
 

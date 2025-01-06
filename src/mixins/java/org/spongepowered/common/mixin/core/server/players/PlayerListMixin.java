@@ -60,6 +60,7 @@ import org.objectweb.asm.Opcodes;
 import org.slf4j.Logger;
 import org.spongepowered.api.Sponge;
 import org.spongepowered.api.adventure.Audiences;
+import org.spongepowered.api.data.Keys;
 import org.spongepowered.api.entity.living.player.User;
 import org.spongepowered.api.entity.living.player.server.ServerPlayer;
 import org.spongepowered.api.event.Cause;
@@ -76,7 +77,6 @@ import org.spongepowered.api.profile.GameProfile;
 import org.spongepowered.api.registry.RegistryTypes;
 import org.spongepowered.api.service.ban.Ban;
 import org.spongepowered.api.service.permission.PermissionService;
-import org.spongepowered.api.service.permission.Subject;
 import org.spongepowered.api.world.server.ServerLocation;
 import org.spongepowered.api.world.server.ServerWorld;
 import org.spongepowered.asm.mixin.Final;
@@ -212,27 +212,29 @@ public abstract class PlayerListMixin implements PlayerListBridge {
                     return CompletableFuture.completedFuture(var3);
                 }
 
-                return CompletableFuture.supplyAsync(() -> {
-                    if (!Sponge.server().isWhitelistEnabled()) {
-                        return true;
-                    }
-                    final PermissionService permissionService = Sponge.server().serviceProvider().permissionService();
-                    Subject subject = permissionService.userSubjects().subject(param1.getId().toString()).orElse(null);
-                    if (subject == null) {
-                        subject = permissionService.defaults();
-                    }
-                    return subject.hasPermission(LoginPermissions.BYPASS_WHITELIST_PERMISSION);
-                }, SpongeCommon.server()).thenCompose(w -> {
-                    if (w) {
-                        return CompletableFuture.completedFuture(null);
-                    }
-                    return Sponge.server().serviceProvider().whitelistService().isWhitelisted(profile).<net.minecraft.network.chat.Component>thenApply(whitelisted -> {
-                        if (!whitelisted) {
-                            return net.minecraft.network.chat.Component.translatable("multiplayer.disconnect.not_whitelisted");
+                return CompletableFuture.supplyAsync(() -> Sponge.server().isWhitelistEnabled(), SpongeCommon.server())
+                    .thenCompose(whitelistEnabled -> {
+                        if (!whitelistEnabled) {
+                            return CompletableFuture.completedFuture(null);
                         }
-                        return null;
+                        final PermissionService permissionService = Sponge.server().serviceProvider().permissionService();
+                        return permissionService.userSubjects().loadSubject(param1.getId().toString()).handle((subject, ex) -> {
+                            if (ex == null) {
+                                return subject.hasPermission(LoginPermissions.BYPASS_WHITELIST_PERMISSION);
+                            }
+                            return permissionService.defaults().hasPermission(LoginPermissions.BYPASS_WHITELIST_PERMISSION);
+                        }).thenCompose(whitelistBypass -> {
+                            if (whitelistBypass) {
+                                return CompletableFuture.completedFuture(null);
+                            }
+                            return Sponge.server().serviceProvider().whitelistService().isWhitelisted(profile).<net.minecraft.network.chat.Component>thenApply(whitelisted -> {
+                                if (!whitelisted) {
+                                    return net.minecraft.network.chat.Component.translatable("multiplayer.disconnect.not_whitelisted");
+                                }
+                                return null;
+                            });
+                        });
                     });
-                });
             });
         }).thenApplyAsync(component -> {
             if (component != null) {
@@ -253,7 +255,9 @@ public abstract class PlayerListMixin implements PlayerListBridge {
     private Optional<CompoundTag> impl$setPlayerDataForNewPlayers(final PlayerList playerList, final net.minecraft.server.level.ServerPlayer playerIn) {
         final Optional<CompoundTag> compound = this.shadow$load(playerIn);
         if (compound.isEmpty()) {
-            ((SpongeServer) SpongeCommon.server()).getPlayerDataManager().setPlayerInfo(playerIn.getUUID(), Instant.now(), Instant.now());
+            final Instant now = Instant.now();
+            ((ServerPlayer) playerIn).offer(Keys.FIRST_DATE_JOINED, now);
+            ((ServerPlayer) playerIn).offer(Keys.LAST_DATE_PLAYED, now);
         }
         return compound;
     }
@@ -440,8 +444,9 @@ public abstract class PlayerListMixin implements PlayerListBridge {
 
         ((ServerPlayerBridge) mcPlayer).bridge$setConnectionMessageToSend(null);
 
-        final PhaseContext<?> context = PhaseTracker.SERVER.getPhaseContext();
-        PhaseTracker.SERVER.pushCause(event);
+        final PhaseTracker phaseTracker = PhaseTracker.getWorldInstance(mcPlayer.serverLevel());
+        final PhaseContext<?> context = phaseTracker.getPhaseContext();
+        phaseTracker.pushCause(event);
         final TransactionalCaptureSupplier transactor = context.getTransactor();
         transactor.logPlayerInventoryChange(mcPlayer, PlayerInventoryTransaction.EventCreator.STANDARD);
         try (final EffectTransactor ignored = BroadcastInventoryChangesEffect.transact(transactor)) {
@@ -479,13 +484,16 @@ public abstract class PlayerListMixin implements PlayerListBridge {
     private void impl$setSpongePlayerDataForSinglePlayer(final net.minecraft.server.level.ServerPlayer entity, final CompoundTag compound) {
         entity.load(compound);
 
-        ((SpongeServer) this.shadow$getServer()).getPlayerDataManager().readPlayerData(compound, entity.getUUID(), null);
+        if (((ServerPlayer) entity).get(Keys.FIRST_DATE_JOINED).isEmpty()) {
+            ((SpongeServer) this.shadow$getServer()).getPlayerDataManager().readLegacyPlayerData((ServerPlayer) entity, compound, null);
+        }
+
+        ((ServerPlayer) entity).offer(Keys.LAST_DATE_PLAYED, Instant.now());
     }
 
-    @SuppressWarnings("OptionalUsedAsFieldOrParameterType")
     @Inject(method = "respawn",
         at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/server/level/ServerPlayer;findRespawnPositionAndUseSpawnBlock(ZLnet/minecraft/world/level/portal/DimensionTransition$PostDimensionTransition;)Lnet/minecraft/world/level/portal/DimensionTransition;"
+            target = "Lnet/minecraft/server/level/ServerPlayer;findRespawnPositionAndUseSpawnBlock(ZLnet/minecraft/world/level/portal/TeleportTransition$PostTeleportTransition;)Lnet/minecraft/world/level/portal/TeleportTransition;"
         )
     )
     private void impl$flagIfRespawnPositionIsGameMechanic(final net.minecraft.server.level.ServerPlayer $$0, final boolean $$1,
@@ -635,7 +643,7 @@ public abstract class PlayerListMixin implements PlayerListBridge {
         final Predicate<net.minecraft.server.level.ServerPlayer> filter;
         ChatType.Bound boundChatType;
 
-        try (final CauseStackManager.StackFrame frame = PhaseTracker.SERVER.pushCauseFrame()) {
+        try (final CauseStackManager.StackFrame frame = PhaseTracker.getServerInstanceExplicitly().pushCauseFrame()) {
             if ($$2 != null) {
                 frame.pushCause($$2);
             }
@@ -671,5 +679,13 @@ public abstract class PlayerListMixin implements PlayerListBridge {
         if (((TransientBridge) player).bridge$isTransient()) {
             ci.cancel();
         }
+    }
+
+    @Redirect(method = "remove", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;hasExactlyOnePlayerPassenger()Z"))
+    private boolean impl$skipUnserializableRootVehicle(final Entity instance) {
+        //Intentionally only checking for the entity type and
+        //not for the TRANSIENT key. This ensures that arbitrary
+        //entities are removed with the player but players are ignored.
+        return instance.hasExactlyOnePlayerPassenger() && instance.getType().canSerialize();
     }
 }

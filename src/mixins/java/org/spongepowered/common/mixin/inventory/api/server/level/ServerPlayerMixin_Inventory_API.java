@@ -72,7 +72,7 @@ public abstract class ServerPlayerMixin_Inventory_API extends PlayerMixin_Invent
         }
         // Create Close_Window to capture item drops
         final net.minecraft.server.level.ServerPlayer player = (net.minecraft.server.level.ServerPlayer) (Object) this;
-        try (final PhaseContext<@NonNull ?> ctx = PacketPhase.General.CLOSE_WINDOW.createPhaseContext(PhaseTracker.SERVER)
+        try (final PhaseContext<@NonNull ?> ctx = PacketPhase.General.CLOSE_WINDOW.createPhaseContext(PhaseTracker.getWorldInstance(player.serverLevel()))
                 .source(this)
                 .packetPlayer(player)
         ) {

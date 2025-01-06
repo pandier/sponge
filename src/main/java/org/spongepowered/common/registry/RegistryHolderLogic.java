@@ -94,14 +94,12 @@ public final class RegistryHolderLogic implements RegistryHolder {
 
     @Override
     public <T> Registry<T> registry(final RegistryType<T> type) {
-        final net.minecraft.core.Registry<net.minecraft.core.Registry<?>> root = this.roots.get(Objects.requireNonNull(type, "type").root());
+        final var root = this.roots.get(Objects.requireNonNull(type, "type").root());
         if (root == null) {
             throw new ValueNotFoundException(String.format("No '%s' root registry has been defined", type.root()));
         }
-        final net.minecraft.core.Registry<?> registry = root.get((ResourceLocation) (Object) type.location());
-        if (registry == null) {
-            throw new ValueNotFoundException(String.format("No '%s' registry has been defined in root '%s'", type.location(), type.root()));
-        }
+        final var registry = root.getOptional((ResourceLocation) (Object) type.location())
+            .orElseThrow(() -> new ValueNotFoundException(String.format("No '%s' registry has been defined in root '%s'", type.location(), type.root())));
         return (Registry<T>) registry;
     }
 
@@ -161,7 +159,7 @@ public final class RegistryHolderLogic implements RegistryHolder {
         if (root == null) {
             throw new ValueNotFoundException(String.format("No '%s' root registry has been defined", type.root()));
         }
-        net.minecraft.core.Registry<?> registry = root.get((ResourceLocation) (Object) type.location());
+        var registry = root.getValue((ResourceLocation) (Object) type.location());
         final boolean exists = registry != null;
         if (!replace && exists) {
             throw new DuplicateRegistrationException(String.format("Registry '%s' in root '%s' has already been defined", type.location(), type.root()));
@@ -180,35 +178,32 @@ public final class RegistryHolderLogic implements RegistryHolder {
         if (defaultValues != null) {
             final MappedRegistry<T> mr = (MappedRegistry<T>) registry;
             defaultValues.forEach((vk, vi, vv) -> {
-                if (vi.isPresent()) {
-                    mr.register(
-                        net.minecraft.resources.ResourceKey.create(key, (ResourceLocation) (Object) vk),
-                        vv,
-                        RegistrationInfo.BUILT_IN
-                    );
-                } else {
-                    mr.register(
-                        net.minecraft.resources.ResourceKey.create(key, (ResourceLocation) (Object) vk),
-                        vv,
-                        RegistrationInfo.BUILT_IN
-                    );
-                }
+                mr.register(
+                    net.minecraft.resources.ResourceKey.create(key, (ResourceLocation) (Object) vk),
+                    vv,
+                    RegistrationInfo.BUILT_IN
+                );
+                vi.ifPresent(id -> {
+                    if (mr.getId(vv) != id) {
+                        throw new IllegalStateException("Registry entry " + vk + " was expected to have id of " + id + " but was instead " + mr.getId(vv));
+                    }
+                });
             });
         }
 
         // This is so wrong and dirty and only because we don't have layered registries...
-        final boolean frozen = ((MappedRegistryAccessor<T>) root).accessor$frozen();
+        final boolean frozen = ((MappedRegistryAccessor<net.minecraft.core.Registry<T>>) root).accessor$frozen();
 
         if (replace && exists) {
-            ((MappedRegistryAccessor<T>) root).accessor$frozen(false);
-            ((MappedRegistryBridge<T>) root).bridge$forceRemoveValue(key);
+            ((MappedRegistryAccessor<net.minecraft.core.Registry<T>>) root).accessor$frozen(false);
+            ((MappedRegistryBridge<net.minecraft.core.Registry<T>>) root).bridge$forceRemoveValue(key);
         }
 
         ((WritableRegistry) root).register(key, registry, RegistrationInfo.BUILT_IN);
         if (registry instanceof CallbackRegistry) {
             ((CallbackRegistry<?>) registry).setCallbackEnabled(true);
         }
-        ((MappedRegistryAccessor<T>) root).accessor$frozen(frozen);
+        ((MappedRegistryAccessor<net.minecraft.core.Registry<T>>) root).accessor$frozen(frozen);
 
         return (Registry<T>) registry;
     }

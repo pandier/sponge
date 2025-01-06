@@ -25,6 +25,7 @@
 package org.spongepowered.neoforge.mixin.inventory.event.server.level;
 
 import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.MenuProvider;
 import net.minecraft.world.entity.player.Player;
@@ -32,6 +33,7 @@ import net.minecraft.world.inventory.AbstractContainerMenu;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.objectweb.asm.Opcodes;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
@@ -43,7 +45,12 @@ import java.util.OptionalInt;
 import java.util.function.Consumer;
 
 @Mixin(ServerPlayer.class)
-public class ServerPlayerMixin_Inventory_Neo {
+public abstract class ServerPlayerMixin_Inventory_Neo {
+
+    // @formatter:off
+    @Shadow public abstract ServerLevel shadow$serverLevel();
+    // @formatter:on
+
     @Nullable private Object inventory$menuProvider;
 
     @Inject(
@@ -56,7 +63,7 @@ public class ServerPlayerMixin_Inventory_Neo {
         )
     )
     private void impl$afterOpenMenu(final CallbackInfoReturnable<OptionalInt> cir) {
-        PhaseTracker.SERVER.getPhaseContext().getTransactor().logContainerSet((ServerPlayer) (Object) this);
+        PhaseTracker.getWorldInstance(this.shadow$serverLevel()).getPhaseContext().getTransactor().logContainerSet((ServerPlayer) (Object) this);
     }
 
     @Inject(method = "openMenu(Lnet/minecraft/world/MenuProvider;Ljava/util/function/Consumer;)Ljava/util/OptionalInt;", at = @At(value = "INVOKE", target = "Lnet/minecraft/server/level/ServerPlayer;initMenu(Lnet/minecraft/world/inventory/AbstractContainerMenu;)V"))
@@ -75,7 +82,7 @@ public class ServerPlayerMixin_Inventory_Neo {
         final MenuProvider menuProvider, final int containerCounter, final net.minecraft.world.entity.player.Inventory inventory,
         final Player player
     ) {
-        try (final EffectTransactor ignored = PhaseTracker.SERVER.getPhaseContext()
+        try (final EffectTransactor ignored = PhaseTracker.getWorldInstance(this.shadow$serverLevel()).getPhaseContext()
             .getTransactor()
             .logOpenInventory((ServerPlayer) (Object) this)
         ) {

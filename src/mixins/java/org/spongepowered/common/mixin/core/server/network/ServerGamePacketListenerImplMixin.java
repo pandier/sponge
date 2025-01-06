@@ -55,7 +55,8 @@ import net.minecraft.server.players.PlayerList;
 import net.minecraft.util.StringUtil;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.RelativeMovement;
+import net.minecraft.world.entity.PositionMoveRotation;
+import net.minecraft.world.entity.Relative;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ClipContext;
@@ -88,8 +89,10 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.Slice;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.common.SpongeCommon;
+import org.spongepowered.common.accessor.network.protocol.game.ServerboundMovePlayerPacketAccessor;
 import org.spongepowered.common.accessor.network.protocol.game.ServerboundMoveVehiclePacketAccessor;
 import org.spongepowered.common.accessor.server.level.ServerPlayerGameModeAccessor;
 import org.spongepowered.common.adventure.SpongeAdventure;
@@ -127,9 +130,8 @@ public abstract class ServerGamePacketListenerImplMixin extends ServerCommonPack
     @Shadow private double vehicleFirstGoodX;
     @Shadow private double vehicleFirstGoodY;
     @Shadow private double vehicleFirstGoodZ;
-    @Shadow private int chatSpamTickCount;
 
-    @Shadow public abstract void shadow$teleport(double x, double y, double z, float yaw, float pitch, Set<RelativeMovement> relativeArguments);
+    @Shadow public abstract void shadow$teleport(PositionMoveRotation pitch, Set<Relative> relativeArguments);
     @Shadow protected abstract CompletableFuture<List<FilteredText>> shadow$filterTextPacket(final List<String> $$0);
     @Shadow protected abstract void shadow$performUnsignedChatCommand(final String $$0);
     @Shadow protected abstract void shadow$performSignedChatCommand(ServerboundChatCommandSignedPacket $$0, LastSeenMessages $$1);
@@ -197,9 +199,11 @@ public abstract class ServerGamePacketListenerImplMixin extends ServerCommonPack
     }
 
     @Inject(method = "handleMovePlayer",
-            at = @At(value = "INVOKE", target = "Lnet/minecraft/server/level/ServerPlayer;isPassenger()Z"),
-            cancellable = true
-    )
+        at = @At(value = "INVOKE", target = "Lnet/minecraft/network/protocol/game/ServerboundMovePlayerPacket;getYRot(F)F"),
+        cancellable = true,
+        slice = @Slice(
+            from = @At(value = "INVOKE", target = "Lnet/minecraft/server/network/ServerGamePacketListenerImpl;updateAwaitingTeleport()Z"),
+            to = @At(value = "INVOKE", target = "Lnet/minecraft/server/level/ServerPlayer;isPassenger()Z")))
     private void impl$callMoveEntityEvent(final ServerboundMovePlayerPacket packetIn, final CallbackInfo ci) {
         final boolean fireMoveEvent = packetIn.hasPosition();
         final boolean fireRotationEvent = packetIn.hasRotation();
@@ -258,15 +262,19 @@ public abstract class ServerGamePacketListenerImplMixin extends ServerCommonPack
             this.player.absMoveTo(fromPosition.x(), fromPosition.y(), fromPosition.z());
             this.player.setXRot((float) originalToRotation.x());
             this.player.setYRot((float) originalToRotation.y());
-            this.shadow$teleport(fromPosition.x(), fromPosition.y(), fromPosition.z(),
-                    (float) toRotation.y(), (float) toRotation.x(),
-                    EnumSet.of(RelativeMovement.X_ROT, RelativeMovement.Y_ROT));
+            this.shadow$teleport(new PositionMoveRotation(
+                    VecHelper.toVanillaVector3d(fromPosition),
+                    Vec3.ZERO,
+                    (float) (toRotation.y() - originalToRotation.y()), (float) (toRotation.x() - originalToRotation.x())
+                ),
+                Relative.ROTATION
+            );
             ci.cancel();
             return;
         }
 
         // Handle event results
-        if (!toPosition.equals(originalToPosition) || !toRotation.equals(originalToRotation)) {
+        if (!toPosition.equals(originalToPosition)) {
             // Notify the client about the new position and new rotation.
             // Both are relatives so the client will keep its momentum.
             // The client thinks its current position is originalToPosition so the new position is relative to that.
@@ -274,10 +282,30 @@ public abstract class ServerGamePacketListenerImplMixin extends ServerCommonPack
             this.player.absMoveTo(originalToPosition.x(), originalToPosition.y(), originalToPosition.z());
             this.player.setXRot((float) originalToRotation.x());
             this.player.setYRot((float) originalToRotation.y());
-            this.shadow$teleport(toPosition.x(), toPosition.y(), toPosition.z(),
-                    (float) toRotation.y(), (float) toRotation.x(),
-                    EnumSet.allOf(RelativeMovement.class));
+            this.shadow$teleport(new PositionMoveRotation(
+                    VecHelper.toVanillaVector3d(toPosition.sub(originalToPosition)),
+                    Vec3.ZERO,
+                    (float) (toRotation.y() - originalToRotation.y()), (float) (toRotation.x() - originalToRotation.x())
+                ),
+                Relative.ALL);
             ci.cancel();
+        } else if (!toRotation.equals(originalToRotation)) {
+            // Notify the client about the new rotation.
+            // Both are relatives so the client will keep its momentum.
+            // The rotation values can be out of "valid" range so set them directly to the same value the client has.
+            this.player.setXRot((float) originalToRotation.x());
+            this.player.setYRot((float) originalToRotation.y());
+            this.shadow$teleport(new PositionMoveRotation(
+                    Vec3.ZERO,
+                    Vec3.ZERO,
+                    (float) (toRotation.y() - originalToRotation.y()), (float) (toRotation.x() - originalToRotation.x())
+                ),
+                EnumSet.of(Relative.X, Relative.Y, Relative.Z, Relative.X_ROT, Relative.Y_ROT, Relative.DELTA_X, Relative.DELTA_Y, Relative.DELTA_Z));
+
+            // Let MC handle the movement but override the rotation.
+            ((ServerboundMovePlayerPacketAccessor) packetIn).accessor$yRot((float) toRotation.y());
+            ((ServerboundMovePlayerPacketAccessor) packetIn).accessor$xRot((float) toRotation.x());
+            ((ServerboundMovePlayerPacketAccessor) packetIn).accessor$hasRot(true);
         }
     }
 
@@ -287,7 +315,7 @@ public abstract class ServerGamePacketListenerImplMixin extends ServerCommonPack
             at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;getControllingPassenger()Lnet/minecraft/world/entity/LivingEntity;")
     )
     private void impl$handleVehicleMoveEvent(final ServerboundMoveVehiclePacket param0, final CallbackInfo ci) {
-        final ServerboundMoveVehiclePacketAccessor packet = (ServerboundMoveVehiclePacketAccessor) param0;
+        final ServerboundMoveVehiclePacketAccessor packet = (ServerboundMoveVehiclePacketAccessor) (Object) param0;
         final Entity rootVehicle = this.player.getRootVehicle();
         final Vector3d fromRotation = new Vector3d(rootVehicle.getYRot(), rootVehicle.getXRot(), 0);
 
@@ -295,8 +323,9 @@ public abstract class ServerGamePacketListenerImplMixin extends ServerCommonPack
         // We need this because we ignore very small position changes as to not spam as many move events.
         final Vector3d fromPosition = VecHelper.toVector3d(rootVehicle.position());
 
-        final Vector3d originalToPosition = new Vector3d(param0.getX(), param0.getY(), param0.getZ());
-        final Vector3d originalToRotation = new Vector3d(param0.getYRot(), param0.getXRot(), 0);
+        final var position = param0.position();
+        final Vector3d originalToPosition = new Vector3d(position.x, position.y(), position.z());
+        final Vector3d originalToRotation = new Vector3d(param0.yRot(), param0.xRot(), 0);
 
         // common checks and throws are done here.
         final @Nullable Vector3d toPosition = SpongeCommonEventFactory.callMoveEvent(
@@ -319,7 +348,7 @@ public abstract class ServerGamePacketListenerImplMixin extends ServerCommonPack
             if (!fromRotation.equals(toRotation)) {
                 rootVehicle.absMoveTo(rootVehicle.getX(), rootVehicle.getY(), rootVehicle.getZ(), (float) toRotation.y(), (float) toRotation.x());
             }
-            this.connection.send(new ClientboundMoveVehiclePacket(rootVehicle));
+            this.connection.send(ClientboundMoveVehiclePacket.fromEntity(rootVehicle));
             ci.cancel();
             return;
         }
@@ -327,12 +356,11 @@ public abstract class ServerGamePacketListenerImplMixin extends ServerCommonPack
         if (!toPosition.equals(originalToPosition) || !toRotation.equals(originalToRotation)) {
             // notify the client about the new position
             rootVehicle.absMoveTo(toPosition.x(), toPosition.y(), toPosition.z(), (float) toRotation.y(), (float) toRotation.x());
-            this.connection.send(new ClientboundMoveVehiclePacket(rootVehicle));
+            this.connection.send(ClientboundMoveVehiclePacket.fromEntity(rootVehicle));
 
             // update the packet, let MC take care of the rest.
-            packet.accessor$x(toPosition.x());
-            packet.accessor$y(toPosition.y());
-            packet.accessor$z(toPosition.z());
+            final var newPos = VecHelper.toVanillaVector3d(toPosition);
+            packet.accessor$position(newPos);
             packet.accessor$yRot((float) toRotation.x());
             packet.accessor$xRot((float) toRotation.y());
 

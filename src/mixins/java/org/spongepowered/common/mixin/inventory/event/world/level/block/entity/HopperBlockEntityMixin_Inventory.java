@@ -121,7 +121,7 @@ public abstract class HopperBlockEntityMixin_Inventory {
 
         // Ignore all container transactions in affected inventories
         if (hopper instanceof final ViewableInventoryBridge bridge) {
-            try (final PhaseContext<?> context = BlockPhase.State.RESTORING_BLOCKS.createPhaseContext(PhaseTracker.SERVER)) {
+            try (final PhaseContext<?> context = BlockPhase.State.RESTORING_BLOCKS.createPhaseContext(PhaseTracker.getWorldInstance())) {
                 context.buildAndSwitch();
                 for (final ServerPlayer player : bridge.viewableBridge$getViewers()) {
                     player.containerMenu.broadcastChanges();
@@ -129,7 +129,7 @@ public abstract class HopperBlockEntityMixin_Inventory {
             }
         }
         if (iInventory instanceof final ViewableInventoryBridge bridge) {
-            try (final PhaseContext<?> context = BlockPhase.State.RESTORING_BLOCKS.createPhaseContext(PhaseTracker.SERVER)) {
+            try (final PhaseContext<?> context = BlockPhase.State.RESTORING_BLOCKS.createPhaseContext(PhaseTracker.getWorldInstance())) {
                 context.buildAndSwitch();
                 for (final ServerPlayer player : bridge.viewableBridge$getViewers()) {
                     player.containerMenu.broadcastChanges();

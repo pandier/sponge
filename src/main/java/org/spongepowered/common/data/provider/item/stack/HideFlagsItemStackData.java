@@ -33,6 +33,7 @@ import net.minecraft.world.item.component.ItemAttributeModifiers;
 import net.minecraft.world.item.component.Unbreakable;
 import net.minecraft.world.item.enchantment.ItemEnchantments;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.spongepowered.api.data.Keys;
 import org.spongepowered.common.accessor.world.item.enchantment.ItemEnchantmentsAccessor;
 import org.spongepowered.common.data.provider.DataProviderRegistrator;
@@ -55,7 +56,13 @@ public final class HideFlagsItemStackData {
                         .get(h -> h.has(DataComponents.CAN_BREAK) && !h.get(DataComponents.CAN_BREAK).showInTooltip())
                         .set((h, v) -> h.set(DataComponents.CAN_BREAK, HideFlagsItemStackData.newAdventureModePredicate(h, DataComponents.CAN_BREAK, !v)))
                     .create(Keys.HIDE_CAN_PLACE)
-                        .get(h -> h.has(DataComponents.CAN_PLACE_ON) && !h.get(DataComponents.CAN_PLACE_ON).showInTooltip())
+                        .get(h -> {
+                            final @Nullable var predicate = h.get(DataComponents.CAN_PLACE_ON);
+                            if (predicate == null) {
+                                return false;
+                            }
+                            return !predicate.showInTooltip();
+                        })
                         .set((h, v) -> h.set(DataComponents.CAN_PLACE_ON, HideFlagsItemStackData.newAdventureModePredicate(h, DataComponents.CAN_PLACE_ON, !v)))
                     .create(Keys.HIDE_ENCHANTMENTS)
                         .get(h -> ((ItemEnchantmentsAccessor)h.getOrDefault(DataComponents.ENCHANTMENTS, ItemEnchantments.EMPTY)).accessor$showInTooltip())

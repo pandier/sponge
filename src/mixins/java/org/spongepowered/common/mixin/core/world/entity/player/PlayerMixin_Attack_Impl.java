@@ -24,6 +24,7 @@
  */
 package org.spongepowered.common.mixin.core.world.entity.player;
 
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
@@ -43,7 +44,9 @@ import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Constant;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.ModifyConstant;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.Slice;
@@ -171,7 +174,7 @@ public abstract class PlayerMixin_Attack_Impl extends LivingEntityMixin_Attack_I
     @Redirect(method = "attack",
             slice = @Slice(from = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;getDeltaMovement()Lnet/minecraft/world/phys/Vec3;"),
                            to = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getKnockback(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/damagesource/DamageSource;)F")),
-            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;hurt(Lnet/minecraft/world/damagesource/DamageSource;F)Z"))
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;hurtOrSimulate(Lnet/minecraft/world/damagesource/DamageSource;F)Z"))
     public boolean attackImpl$onHurt(final Entity targetEntity, final DamageSource damageSource, final float mcDamage) {
 
         float knockbackModifier = this.shadow$getKnockback(targetEntity, damageSource) + (this.attackImpl$isStrongSprintAttack ? 1.0F : 0.0F);
@@ -190,14 +193,18 @@ public abstract class PlayerMixin_Attack_Impl extends LivingEntityMixin_Attack_I
             this.impl$playAttackSound((Player) (Object) this, SoundEvents.PLAYER_ATTACK_KNOCKBACK);
         }
 
-        return targetEntity.hurt(damageSource, (float) this.attackImpl$attackEvent.finalOutputDamage());
+        if (targetEntity.level() instanceof ServerLevel sl) {
+            return targetEntity.hurtServer(sl, damageSource, (float) this.attackImpl$attackEvent.finalOutputDamage());
+        }
+
+        return targetEntity.hurtClient(damageSource);
     }
 
     /**
      * Set enchantment damage with value from event
      */
     @ModifyVariable(method = "attack", ordinal = 1,
-            slice = @Slice(from = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;hurt(Lnet/minecraft/world/damagesource/DamageSource;F)Z"),
+            slice = @Slice(from = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;hurtOrSimulate(Lnet/minecraft/world/damagesource/DamageSource;F)Z"),
                     to = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/LivingEntity;knockback(DDD)V", ordinal = 0)),
             at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getKnockback(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/damagesource/DamageSource;)F"))
     public float attackImpl$enchentmentDamageFromEvent(final float enchDmg) {
@@ -211,6 +218,14 @@ public abstract class PlayerMixin_Attack_Impl extends LivingEntityMixin_Attack_I
             at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getKnockback(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/damagesource/DamageSource;)F"))
     public float attackImpl$sweepHook(final Player instance, final Entity entity, final DamageSource damageSource) {
         return this.attackImpl$attackEvent.knockbackModifier();
+    }
+
+    @ModifyConstant(method = "attack", constant = @Constant(floatValue = 1.0F), slice = @Slice(
+        from = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getKnockback(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/damagesource/DamageSource;)F"),
+        to = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/LivingEntity;knockback(DDD)V"))
+    )
+    private float attackImpl$noDoubleAddKb(final float constant) {
+        return 0.0F;
     }
 
     /**
@@ -271,7 +286,7 @@ public abstract class PlayerMixin_Attack_Impl extends LivingEntityMixin_Attack_I
      */
     @Redirect(method = "attack",
             slice = @Slice(from = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/Level;getEntitiesOfClass(Ljava/lang/Class;Lnet/minecraft/world/phys/AABB;)Ljava/util/List;"),
-                           to = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/LivingEntity;hurt(Lnet/minecraft/world/damagesource/DamageSource;F)Z")),
+                           to = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/LivingEntity;hurt(Lnet/minecraft/world/damagesource/DamageSource;F)V")),
             at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/LivingEntity;knockback(DDD)V"))
     public void attackImpl$modifyKnockback(final LivingEntity instance, final double $$0, final double $$1, final double $$2) {
         instance.knockback($$0 * this.attackImpl$attackEvent.knockbackModifier(), $$1, $$2);
@@ -286,14 +301,14 @@ public abstract class PlayerMixin_Attack_Impl extends LivingEntityMixin_Attack_I
         instance.setItemInHand(interactionHand, stack);
 
         // Capture...
-        final PhaseContext<@NonNull ?> context = PhaseTracker.SERVER.getPhaseContext();
+        final PhaseContext<@NonNull ?> context = PhaseTracker.getWorldInstance((ServerLevel) this.shadow$level()).getPhaseContext();
         final TransactionalCaptureSupplier transactor = context.getTransactor();
         transactor.logPlayerInventoryChange(instance, PlayerInventoryTransaction.EventCreator.STANDARD);
         this.inventoryMenu.broadcastChanges();
     }
 
     @Inject(method = "actuallyHurt", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getDamageAfterArmorAbsorb(Lnet/minecraft/world/damagesource/DamageSource;F)F"))
-    public void attackImpl$startActuallyHurt(DamageSource damageSource, float originalDamage, CallbackInfo ci) {
+    public void attackImpl$startActuallyHurt(final ServerLevel level, DamageSource damageSource, float originalDamage, CallbackInfo ci) {
         // TODO check for direct call?
         this.attackImpl$actuallyHurt = new DamageEventUtil.ActuallyHurt((LivingEntity) (Object) this, new ArrayList<>(), damageSource, originalDamage);
     }
@@ -317,7 +332,7 @@ public abstract class PlayerMixin_Attack_Impl extends LivingEntityMixin_Attack_I
      * Cleanup
      */
     @Inject(method = "actuallyHurt", at = @At("RETURN"))
-    public void attackImpl$afterActuallyHurt(final DamageSource $$0, final float $$1, final CallbackInfo ci) {
+    public void attackImpl$afterActuallyHurt(final ServerLevel level, final DamageSource $$0, final float $$1, final CallbackInfo ci) {
         this.attackImpl$handlePostDamage();
         this.attackImpl$actuallyHurt = null;
         this.attackImpl$actuallyHurtResult = null;

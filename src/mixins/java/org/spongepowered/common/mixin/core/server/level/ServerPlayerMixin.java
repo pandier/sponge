@@ -56,12 +56,16 @@ import net.minecraft.server.players.PlayerList;
 import net.minecraft.stats.Stat;
 import net.minecraft.stats.Stats;
 import net.minecraft.util.Unit;
+import net.minecraft.util.profiling.Profiler;
+import net.minecraft.util.profiling.ProfilerFiller;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.PositionMoveRotation;
+import net.minecraft.world.entity.Relative;
 import net.minecraft.world.entity.animal.AbstractFish;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
@@ -71,7 +75,7 @@ import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.border.WorldBorder;
-import net.minecraft.world.level.portal.DimensionTransition;
+import net.minecraft.world.level.portal.TeleportTransition;
 import net.minecraft.world.level.storage.LevelData;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.scores.PlayerTeam;
@@ -125,8 +129,10 @@ import org.spongepowered.common.accessor.network.ConnectionAccessor;
 import org.spongepowered.common.accessor.server.level.ChunkMapAccessor;
 import org.spongepowered.common.accessor.server.level.ChunkMap_TrackedEntityAccessor;
 import org.spongepowered.common.accessor.server.network.ServerCommonPacketListenerImplAccessor;
+import org.spongepowered.common.accessor.world.level.portal.TeleportTransitionAccessor;
 import org.spongepowered.common.adventure.SpongeAdventure;
 import org.spongepowered.common.bridge.data.DataCompoundHolder;
+import org.spongepowered.common.bridge.data.TransientBridge;
 import org.spongepowered.common.bridge.permissions.SubjectBridge;
 import org.spongepowered.common.bridge.server.ServerScoreboardBridge;
 import org.spongepowered.common.bridge.server.level.ServerPlayerBridge;
@@ -148,6 +154,7 @@ import org.spongepowered.common.util.VecHelper;
 import org.spongepowered.common.world.border.PlayerOwnBorderListener;
 import org.spongepowered.math.vector.Vector3d;
 
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Objects;
@@ -175,6 +182,7 @@ public abstract class ServerPlayerMixin extends PlayerMixin implements SubjectBr
     @Shadow protected abstract void shadow$triggerDimensionChangeTriggers(ServerLevel serverworld);
     @Shadow public abstract void shadow$doCloseContainer();
     @Shadow public abstract boolean shadow$setGameMode(GameType param0);
+    @Shadow public abstract void shadow$setCamera(@org.jetbrains.annotations.Nullable final Entity $$0);
     // @formatter:on
 
     private net.minecraft.network.chat.@Nullable Component impl$connectionMessage;
@@ -189,6 +197,7 @@ public abstract class ServerPlayerMixin extends PlayerMixin implements SubjectBr
     private boolean impl$sleepingIgnored;
     private boolean impl$noGameModeEvent;
     @Nullable private WorldBorder impl$worldBorder;
+    private ServerLevel impl$respawnLevel;
 
     @Override
     public net.minecraft.network.chat.@Nullable Component bridge$getConnectionMessageToSend() {
@@ -221,7 +230,7 @@ public abstract class ServerPlayerMixin extends PlayerMixin implements SubjectBr
         final var thisPlayer = ((net.minecraft.server.level.ServerPlayer) (Object) this);
 
         final ChunkPos chunkPos = new ChunkPos(VecHelper.toBlockPos(pos));
-        level.getChunkSource().addRegionTicket(TicketType.POST_TELEPORT, chunkPos, 1, thisPlayer.getId());
+        level.getChunkSource().addRegionTicket(TicketType.FORCED, chunkPos, 1, chunkPos);
 
         thisPlayer.stopRiding();
         if (thisPlayer.isSleeping()) {
@@ -229,11 +238,11 @@ public abstract class ServerPlayerMixin extends PlayerMixin implements SubjectBr
         }
 
         if (!isChangeOfWorld) {
-            this.connection.teleport(pos.x(), pos.y(), pos.z(), this.shadow$getYRot(), this.shadow$getXRot(), new HashSet<>());
+            this.connection.teleport(new PositionMoveRotation(VecHelper.toVanillaVector3d(pos), Vec3.ZERO, this.shadow$getYRot(), this.shadow$getXRot()), new HashSet<>());
             this.connection.resetPosition();
         } else {
-            this.bridge$changeDimension(new DimensionTransition(level, VecHelper.toVanillaVector3d(pos), thisPlayer.getKnownMovement(),
-                    this.shadow$getYRot(), this.shadow$getXRot(), DimensionTransition.DO_NOTHING));
+            this.bridge$changeDimension(new TeleportTransition(level, VecHelper.toVanillaVector3d(pos), thisPlayer.getKnownMovement(),
+                    this.shadow$getYRot(), this.shadow$getXRot(), TeleportTransition.DO_NOTHING));
         }
         return true;
     }
@@ -315,7 +324,7 @@ public abstract class ServerPlayerMixin extends PlayerMixin implements SubjectBr
     @Override
     public boolean bridge$keepInventory() {
         if (this.impl$keepInventory == null) {
-            return this.shadow$level().getGameRules().getBoolean(GameRules.RULE_KEEPINVENTORY);
+            return this.shadow$serverLevel().getGameRules().getBoolean(GameRules.RULE_KEEPINVENTORY);
         }
         return this.impl$keepInventory;
     }
@@ -400,16 +409,25 @@ public abstract class ServerPlayerMixin extends PlayerMixin implements SubjectBr
      * @reason Redirect all teleports through {@link #bridge$changeDimension} to fire our move/rotate/teleport events
      */
     @Overwrite
-    public void teleportTo(final ServerLevel world, final double x, final double y, final double z, final float yaw, final float pitch) {
+    public boolean teleportTo(final ServerLevel world,
+                              final double x,
+                              final double y,
+                              final double z,
+                              Set<Relative> relative,
+                              final float yaw,
+                              final float pitch,
+                              final boolean setCamera) {
+        if (setCamera) {
+            this.shadow$setCamera((net.minecraft.server.level.ServerPlayer) (Object) this);
+        }
         final boolean hasMovementContext = PhaseTracker.getCauseStackManager().currentContext().containsKey(EventContextKeys.MOVEMENT_TYPE);
         try (final CauseStackManager.StackFrame frame = PhaseTracker.getCauseStackManager().pushCauseFrame()) {
             if (!hasMovementContext) {
                 frame.addContext(EventContextKeys.MOVEMENT_TYPE, MovementTypes.PLUGIN);
             }
 
-            final var thisPlayer = (net.minecraft.server.level.ServerPlayer) (Object) this;
-            this.bridge$changeDimension(new DimensionTransition(world, new Vec3(x, y, z), Vec3.ZERO, yaw, pitch,
-                    e -> world.getChunkSource().addRegionTicket(TicketType.POST_TELEPORT, e.chunkPosition(), 1, thisPlayer.getId())));
+            return this.bridge$changeDimension(new TeleportTransition(world, new Vec3(x, y, z), Vec3.ZERO, yaw, pitch, relative,
+                    e -> world.getChunkSource().addRegionTicket(TicketType.FORCED, e.chunkPosition(), 1, e.chunkPosition()))) != null;
         }
     }
 
@@ -423,7 +441,7 @@ public abstract class ServerPlayerMixin extends PlayerMixin implements SubjectBr
      * @return The {@link Entity} that is either this one, or replaces this one
      */
     @Override
-    public @Nullable Entity bridge$changeDimension(final DimensionTransition originalTransition) {
+    public net.minecraft.server.level.@Nullable ServerPlayer bridge$changeDimension(final TeleportTransition originalTransition) {
         if (this.shadow$isRemoved()) {
             return null;
         }
@@ -446,9 +464,9 @@ public abstract class ServerPlayerMixin extends PlayerMixin implements SubjectBr
         // Sponge End
 
         if (newLevel.dimension() == oldLevel.dimension()) { // actually no dimension change
-             this.connection.teleport(transition.pos().x, transition.pos().y, transition.pos().z, transition.yRot(), transition.xRot());
+             this.connection.teleport(transition.position().x, transition.position().y, transition.position().z, transition.yRot(), transition.xRot());
              this.connection.resetPosition();
-            transition.postDimensionTransition().onTransition(thisPlayer);
+            transition.postTeleportTransition().onTransition(thisPlayer);
             // TODO setYHeadRot after would rotate event result
             return thisPlayer;
         }
@@ -461,25 +479,26 @@ public abstract class ServerPlayerMixin extends PlayerMixin implements SubjectBr
         oldLevel.removePlayerImmediately(thisPlayer, Entity.RemovalReason.CHANGED_DIMENSION);
         this.shadow$unsetRemoved();
 
-        oldLevel.getProfiler().push("moving");
+        final ProfilerFiller filler = Profiler.get();
+        filler.push("moving");
         if (oldLevel.dimension() == Level.OVERWORLD && newLevel.dimension() == Level.NETHER) {
             this.enteredNetherPosition = thisPlayer.position();
         }
-        oldLevel.getProfiler().pop();
+        filler.pop();
 
-        oldLevel.getProfiler().push("placing");
+        filler.push("placing");
         thisPlayer.setServerLevel(newLevel);
-        this.connection.teleport(transition.pos().x, transition.pos().y, transition.pos().z, transition.yRot(), transition.xRot());
+        this.connection.teleport(transition.position().x, transition.position().y, transition.position().z, transition.yRot(), transition.xRot());
         this.connection.resetPosition();
         newLevel.addDuringTeleport(thisPlayer);
-        oldLevel.getProfiler().pop();
+        filler.pop();
 
         this.shadow$triggerDimensionChangeTriggers(oldLevel); // TODO old sponge EntityUtil#performPostChangePlayerWorldLogic this was only done when using a portal
         this.connection.send(new ClientboundPlayerAbilitiesPacket(thisPlayer.getAbilities()));
         playerList.sendLevelInfo(thisPlayer, newLevel);
         playerList.sendAllPlayerInfo(thisPlayer);
         playerList.sendActivePlayerEffects(thisPlayer);
-        transition.postDimensionTransition().onTransition(thisPlayer);
+        transition.postTeleportTransition().onTransition(thisPlayer);
         // TODO old sponge EntityUtil#performPostChangePlayerWorldLogic called bridge$getBossBarManager().onPlayerDisconnect(player); on both worlds
         // TODO old sponge EntityUtil#performPostChangePlayerWorldLogic closed player.closeContainer(); when open
         this.lastSentExp = -1;
@@ -500,17 +519,18 @@ public abstract class ServerPlayerMixin extends PlayerMixin implements SubjectBr
     }
 
     @Nullable
-    private DimensionTransition impl$fireDimensionTransitionEvents(final DimensionTransition originalTransition,
+    private TeleportTransition impl$fireDimensionTransitionEvents(final TeleportTransition originalTransition,
             final net.minecraft.server.level.ServerPlayer thisPlayer) {
         var transition = originalTransition;
         var isDimensionChange = transition.newLevel() != thisPlayer.serverLevel();
 
         if (!this.impl$moveEventsFired) {
-            final var contextToSwitchTo = EntityPhase.State.PORTAL_DIMENSION_CHANGE.createPhaseContext(PhaseTracker.getInstance()).worldChange()
+            final PhaseTracker phaseTracker = PhaseTracker.getWorldInstance(thisPlayer.serverLevel());
+            final var contextToSwitchTo = EntityPhase.State.PORTAL_DIMENSION_CHANGE.createPhaseContext(phaseTracker).worldChange()
                     .player();
-            final boolean hasMovementContext = PhaseTracker.SERVER.currentContext().containsKey(EventContextKeys.MOVEMENT_TYPE);
+            final boolean hasMovementContext = phaseTracker.currentContext().containsKey(EventContextKeys.MOVEMENT_TYPE);
             try (final TeleportContext context = contextToSwitchTo.buildAndSwitch();
-                    final CauseStackManager.StackFrame frame = PhaseTracker.getCauseStackManager().pushCauseFrame()) {
+                    final CauseStackManager.StackFrame frame = phaseTracker.pushCauseFrame()) {
                 frame.pushCause(thisPlayer);
                 if (!hasMovementContext) {
                     // TODO we should be able to detect normal plugin code though
@@ -518,7 +538,7 @@ public abstract class ServerPlayerMixin extends PlayerMixin implements SubjectBr
                     frame.addContext(EventContextKeys.MOVEMENT_TYPE, MovementTypes.PLUGIN);
                 }
 
-                final var originalDest = VecHelper.toVector3d(transition.pos());
+                final var originalDest = VecHelper.toVector3d(transition.position());
                 final @Nullable Vector3d newDest;
 
                 if (isDimensionChange) {
@@ -528,12 +548,14 @@ public abstract class ServerPlayerMixin extends PlayerMixin implements SubjectBr
                             return null;
                         }
                         if (preEvent.destinationWorld() != preEvent.originalDestinationWorld()) {
-                            transition = new DimensionTransition((ServerLevel) preEvent.destinationWorld(),
-                                    transition.pos(),
-                                    transition.speed(),
+                            transition = new TeleportTransition((ServerLevel) preEvent.destinationWorld(),
+                                    transition.position(),
+                                    transition.deltaMovement(),
                                     transition.yRot(), transition.xRot(),
                                     transition.missingRespawnBlock(),
-                                    transition.postDimensionTransition());
+                                    transition.asPassenger(),
+                                    EnumSet.noneOf(Relative.class),
+                                    transition.postTeleportTransition());
                         }
                     }
 
@@ -544,7 +566,7 @@ public abstract class ServerPlayerMixin extends PlayerMixin implements SubjectBr
                     newDest = reposition.destinationPosition();
                 } else {
                     if (ShouldFire.MOVE_ENTITY_EVENT) { // TODO move into impl$fireMoveEvent?
-                        newDest = this.impl$fireMoveEvent(PhaseTracker.SERVER, originalDest);
+                        newDest = this.impl$fireMoveEvent(phaseTracker, originalDest);
                         if (newDest == null) {
                             return null;
                         }
@@ -554,12 +576,14 @@ public abstract class ServerPlayerMixin extends PlayerMixin implements SubjectBr
                 }
                 if (newDest != originalDest) {
                     // if changed override the DimensionTransition
-                    transition = new DimensionTransition(transition.newLevel(),
+                    transition = new TeleportTransition(transition.newLevel(),
                             VecHelper.toVanillaVector3d(newDest),
-                            transition.speed(),
+                            transition.deltaMovement(),
                             transition.yRot(), transition.xRot(),
                             transition.missingRespawnBlock(),
-                            transition.postDimensionTransition());
+                            transition.asPassenger(),
+                        EnumSet.noneOf(Relative.class),
+                            transition.postTeleportTransition());
                 }
 
                 final Vector3d toRot = new Vector3d(transition.xRot(), transition.yRot(), 0);
@@ -570,12 +594,14 @@ public abstract class ServerPlayerMixin extends PlayerMixin implements SubjectBr
                     newToRot = fromRot; // Cancelled Rotate - Reset to original rotation
                 }
                 if (toRot != newToRot) {
-                    transition = new DimensionTransition(transition.newLevel(),
-                            transition.pos(),
-                            transition.speed(),
+                    transition = new TeleportTransition(transition.newLevel(),
+                            transition.position(),
+                            transition.deltaMovement(),
                             (float) newToRot.y(), (float) newToRot.x(),
                             transition.missingRespawnBlock(),
-                            transition.postDimensionTransition());
+                            transition.asPassenger(),
+                            EnumSet.noneOf(Relative.class),
+                            transition.postTeleportTransition());
                 }
 
             }
@@ -618,7 +644,7 @@ public abstract class ServerPlayerMixin extends PlayerMixin implements SubjectBr
         }
         // Sponge end
 
-        final var level = this.shadow$level();
+        final var level = this.shadow$serverLevel();
         final boolean flag = level.getGameRules().getBoolean(GameRules.RULE_SHOWDEATHMESSAGES) && !event.isMessageCancelled();
         if (flag) {
             final net.minecraft.network.chat.Component component = this.shadow$getCombatTracker().getDeathMessage();
@@ -672,7 +698,7 @@ public abstract class ServerPlayerMixin extends PlayerMixin implements SubjectBr
         final LivingEntity livingentity = this.shadow$getKillCredit();
         if (livingentity != null) {
             this.shadow$awardStat(Stats.ENTITY_KILLED_BY.get(livingentity.getType()));
-            livingentity.awardKillScore((net.minecraft.server.level.ServerPlayer) (Object) this, this.deathScore, cause);
+            livingentity.awardKillScore((net.minecraft.server.level.ServerPlayer) (Object) this, cause);
             this.shadow$createWitherRose(livingentity);
         }
 
@@ -909,19 +935,40 @@ public abstract class ServerPlayerMixin extends PlayerMixin implements SubjectBr
         return ((ServerWorld) this.shadow$serverLevel()).properties().pvp();
     }
 
+    /**
+     * @author gabizou - 1.21.2-pre1
+     * @reason We route all teleportation through sponge's bridge for handling events
+     */
     @Overwrite
-    public Entity changeDimension(final DimensionTransition transition) {
+    public net.minecraft.server.level.@Nullable ServerPlayer teleport(final TeleportTransition transition) {
         return this.bridge$changeDimension(transition);
     }
 
     @Redirect(method = "findRespawnPositionAndUseSpawnBlock", at = @At(value = "INVOKE", target = "Lnet/minecraft/server/level/ServerPlayer;getRespawnDimension()Lnet/minecraft/resources/ResourceKey;"))
     private ResourceKey<Level> impl$callRespawnPlayerSelectWorld(final net.minecraft.server.level.ServerPlayer player) {
-        final var playerRespawnDestination = this.server.getLevel(player.getRespawnDimension());
+        var playerRespawnDestination = this.server.getLevel(player.getRespawnDimension());
+        if (playerRespawnDestination == null) {
+            SpongeCommon.logger().warn("The player '{}' respawn location was located in a world that isn't loaded or doesn't exist. This is not safe so "
+                + "the player will be moved to the spawn of the default world.", player.getGameProfile().getName());
+            playerRespawnDestination = player.server.overworld();
+        }
 
         final RespawnPlayerEvent.SelectWorld event = SpongeEventFactory.createRespawnPlayerEventSelectWorld(PhaseTracker.getCauseStackManager().currentCause(),
                 (ServerWorld) playerRespawnDestination, (ServerWorld) player.serverLevel(), (ServerWorld) playerRespawnDestination, (ServerPlayer) player);
         SpongeCommon.post(event);
 
+        this.impl$respawnLevel = (ServerLevel) event.destinationWorld();
         return ((ServerLevel) event.destinationWorld()).dimension();
+    }
+
+    @Inject(method = "findRespawnPositionAndUseSpawnBlock", at = @At("RETURN"))
+    private void impl$onFindRespawnPositionAndUseSpawnBlock(final CallbackInfoReturnable<TeleportTransition> cir) {
+        ((TeleportTransitionAccessor) (Object) cir.getReturnValue()).accessor$newLevel(this.impl$respawnLevel);
+        this.impl$respawnLevel = null;
+    }
+
+    @Redirect(method = "saveParentVehicle", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;hasExactlyOnePlayerPassenger()Z"))
+    private boolean impl$skipUnserializableRootVehicle(final Entity instance) {
+        return instance.hasExactlyOnePlayerPassenger() && !((TransientBridge) instance).bridge$isTransient();
     }
 }

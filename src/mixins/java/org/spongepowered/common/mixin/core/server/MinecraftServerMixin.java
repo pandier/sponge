@@ -64,6 +64,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Constant;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyConstant;
+import org.spongepowered.asm.mixin.injection.Slice;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.spongepowered.asm.mixin.injection.callback.LocalCapture;
@@ -127,7 +128,7 @@ public abstract class MinecraftServerMixin implements SpongeServer, MinecraftSer
         //MinecraftServer Executor to prevent changes in timings.
 
         @Override
-        protected @NonNull Runnable wrapRunnable(@NonNull Runnable runnable) {
+        public Runnable wrapRunnable(Runnable runnable) {
             return runnable;
         }
 
@@ -153,7 +154,7 @@ public abstract class MinecraftServerMixin implements SpongeServer, MinecraftSer
                                                            final AtomicReference<MinecraftServer> atomicReference,
                                                            final Thread thread) {
         try {
-            PhaseTracker.SERVER.setThread(thread);
+            PhaseTracker.getServerInstanceExplicitly().setThread(thread);
         } catch (final IllegalAccessException e) {
             throw new RuntimeException("Could not initialize the server PhaseTracker!");
         }
@@ -228,13 +229,18 @@ public abstract class MinecraftServerMixin implements SpongeServer, MinecraftSer
         ci.cancel();
     }
 
-    @ModifyConstant(method = "tickServer", constant = @Constant(intValue = 0, ordinal = 0))
-    private int getSaveTickInterval(final int zero) {
+    @ModifyConstant(method = "tickServer",
+        slice = @Slice(
+            to = @At(value = "INVOKE", target = "Lnet/minecraft/server/MinecraftServer;autoSave()V", ordinal = 1),
+            from = @At(value = "FIELD", target = "Lnet/minecraft/server/MinecraftServer;ticksUntilAutosave:I", ordinal = 0)
+        ),
+        constant = @Constant(intValue = 0, ordinal = 0, expandZeroConditions = Constant.Condition.LESS_THAN_OR_EQUAL_TO_ZERO))
+    private int impl$getSaveTickInterval(final int zero) {
         if (!this.shadow$isDedicatedServer()) {
             return zero;
         } else if (!this.shadow$isRunning()) {
             // Don't autosave while server is stopping
-            return Integer.MAX_VALUE;
+            return Integer.MIN_VALUE;
         }
 
         final int autoPlayerSaveInterval = SpongeConfigs.getCommon().get().world.playerAutoSaveInterval;
@@ -249,7 +255,7 @@ public abstract class MinecraftServerMixin implements SpongeServer, MinecraftSer
         this.isSaving = false;
 
         // force check to fail as we handle everything above
-        return Integer.MAX_VALUE;
+        return Integer.MIN_VALUE;
     }
 
     /**

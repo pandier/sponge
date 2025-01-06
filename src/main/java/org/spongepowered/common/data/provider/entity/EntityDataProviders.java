@@ -49,6 +49,7 @@ public final class EntityDataProviders extends DataProviderRegistratorBuilder {
         CatData.register(this.registrator);
         ChickenData.register(this.registrator);
         CommandBlockMinecartData.register(this.registrator);
+        CreakingData.register(this.registrator);
         CreeperData.register(this.registrator);
         DamagingProjectileData.register(this.registrator);
         DolphinData.register(this.registrator);
@@ -66,6 +67,7 @@ public final class EntityDataProviders extends DataProviderRegistratorBuilder {
         FireworkRocketData.register(this.registrator);
         FishingBobberData.register(this.registrator);
         FoxData.register(this.registrator);
+        FrogData.register(this.registrator);
         FurnaceMinecartData.register(this.registrator);
         FusedExplosiveData.register(this.registrator);
         GrieferData.register(this.registrator);
@@ -74,6 +76,7 @@ public final class EntityDataProviders extends DataProviderRegistratorBuilder {
         HorseData.register(this.registrator);
         HumanData.register(this.registrator);
         IdentifiableData.register(this.registrator);
+        InteractionData.register(this.registrator);
         InvulnerableData.register(this.registrator);
         IronGolemData.register(this.registrator);
         ItemData.register(this.registrator);

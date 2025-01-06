@@ -1,6 +1,5 @@
 # Build #
 #########
-MANIFEST.MF
 dependency-reduced-pom.xml
 
 # Compiled #
@@ -11,6 +10,7 @@ dist
 lib
 out
 run
+run_snap
 /target
 *.com
 *.class
