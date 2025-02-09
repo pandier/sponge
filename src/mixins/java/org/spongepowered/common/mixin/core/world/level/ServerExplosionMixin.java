@@ -79,6 +79,7 @@ public abstract class ServerExplosionMixin implements ExplosionBridge {
         final ExplosionDamageCalculator $$3, final Vec3 $$4, final float $$5, final boolean $$6,
         final net.minecraft.world.level.Explosion.BlockInteraction $$7, final CallbackInfo ci) {
         this.impl$shouldDamageEntities = true;
+        this.impl$shouldPlaySmoke = true;
         this.impl$resolution = 16;
         this.impl$randomness = 1.0F;
         this.impl$knockbackMultiplier = 1.0;
