@@ -347,7 +347,7 @@ public final class ItemStackData {
                                 .result(DataTransactionResult.Type.SUCCESS)
                                 .success(Value.immutableOf(Keys.COOLDOWN, value));
                             if (existing != null) {
-                                h.set(DataComponents.USE_COOLDOWN, new UseCooldown(value.ticks(), existing.cooldownGroup()));
+                                h.set(DataComponents.USE_COOLDOWN, new UseCooldown(value.ticks() / 20F, existing.cooldownGroup()));
                                 builder.replace(existing.cooldownGroup().map(ResourceKey.class::cast)
                                     .map(group ->
                                         List.of(
@@ -359,7 +359,7 @@ public final class ItemStackData {
                                         Value.immutableOf(Keys.COOLDOWN, Ticks.of(existing.ticks()))
                                     )));
                             } else {
-                                h.set(DataComponents.USE_COOLDOWN, new UseCooldown(value.ticks(), Optional.empty()));
+                                h.set(DataComponents.USE_COOLDOWN, new UseCooldown(value.ticks() / 20F, Optional.empty()));
                             }
                             return builder.build();
                         })
