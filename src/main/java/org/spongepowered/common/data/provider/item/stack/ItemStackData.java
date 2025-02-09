@@ -344,6 +344,7 @@ public final class ItemStackData {
                             }
                             final var existing = h.get(DataComponents.USE_COOLDOWN);
                             var builder = DataTransactionResult.builder()
+                                .result(DataTransactionResult.Type.SUCCESS)
                                 .success(Value.immutableOf(Keys.COOLDOWN, value));
                             if (existing != null) {
                                 h.set(DataComponents.USE_COOLDOWN, new UseCooldown(value.ticks(), existing.cooldownGroup()));
