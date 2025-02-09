@@ -22,11 +22,21 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-package org.spongepowered.common.bridge.world.ticks;
+package org.spongepowered.common.event.tracking.phase.player;
 
-public interface ScheduledTickBridge {
+import org.spongepowered.common.event.tracking.PhaseTracker;
+import org.spongepowered.common.event.tracking.PooledPhaseState;
+import org.spongepowered.common.event.tracking.TrackingUtil;
 
-    boolean bridge$isPartOfWorldGeneration();
+public final class PlayerInteractPhase extends PooledPhaseState<PlayerInteractContext> {
 
-    void bridge$setIsPartOfWorldGeneration(boolean isLoading);
+    @Override
+    protected PlayerInteractContext createNewContext(final PhaseTracker tracker) {
+        return new PlayerInteractContext(this, tracker);
+    }
+
+    @Override
+    public void unwind(final PlayerInteractContext context) {
+        TrackingUtil.processBlockCaptures(context);
+    }
 }

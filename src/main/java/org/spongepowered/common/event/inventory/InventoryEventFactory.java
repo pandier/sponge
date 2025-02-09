@@ -203,7 +203,7 @@ public class InventoryEventFactory {
         if (trans.isEmpty()) {
             return true;
         }
-        final ChangeInventoryEvent.Pickup event = SpongeEventFactory.createChangeInventoryEventPickup(PhaseTracker.getCauseStackManager().currentCause(), spongeInventory, trans);
+        final ChangeInventoryEvent.Pickup event = SpongeEventFactory.createChangeInventoryEventPickup(PhaseTracker.getInstance().currentCause(), spongeInventory, trans);
         SpongeCommon.post(event);
         PacketPhaseUtil.handleSlotRestore(null, null, event.transactions(), event.isCancelled());
         return !event.isCancelled();
@@ -226,15 +226,14 @@ public class InventoryEventFactory {
         return trans;
     }
 
-    public static boolean callInteractContainerOpenEvent(final ServerPlayer player) {
-        final ItemStackSnapshot newCursor = ItemStackUtil.snapshotOf(player.containerMenu.getCarried());
+    public static boolean callInteractContainerOpenEvent(final ServerPlayer player, final AbstractContainerMenu menu) {
+        final ItemStackSnapshot newCursor = ItemStackUtil.snapshotOf(menu.getCarried());
         final Transaction<ItemStackSnapshot> cursorTransaction = new Transaction<>(ItemStackSnapshot.empty(), newCursor);
         final InteractContainerEvent.Open event =
                 SpongeEventFactory.createInteractContainerEventOpen(PhaseTracker.getWorldInstance(player.serverLevel()).currentCause(),
                         (org.spongepowered.api.item.inventory.Container) player.containerMenu, cursorTransaction);
         SpongeCommon.post(event);
         if (event.isCancelled()) {
-            player.closeContainer();
             return false;
         }
         // Custom cursor
@@ -285,10 +284,6 @@ public class InventoryEventFactory {
             return null;
         }
 
-        if (!InventoryEventFactory.callInteractContainerOpenEvent(player)) {
-            return null;
-        }
-
         if (container instanceof ContainerBridge) {
             // This overwrites the normal container behaviour and allows viewing
             // inventories that are more than 8 blocks away
@@ -304,11 +299,11 @@ public class InventoryEventFactory {
     }
 
     public static TransferInventoryEvent.Pre callTransferPre(final Inventory source, final Inventory destination) {
-        PhaseTracker.getCauseStackManager().pushCause(source);
+        PhaseTracker.getInstance().pushCause(source);
         final TransferInventoryEvent.Pre event = SpongeEventFactory.createTransferInventoryEventPre(
-                PhaseTracker.getCauseStackManager().currentCause(), source, destination);
+                PhaseTracker.getInstance().currentCause(), source, destination);
         SpongeCommon.post(event);
-        PhaseTracker.getCauseStackManager().popCause();
+        PhaseTracker.getInstance().popCause();
         return event;
     }
 
@@ -318,7 +313,7 @@ public class InventoryEventFactory {
         if (captureSource == null || source == null || destination == null || sourceSlotTransaction == null) {
             return;
         }
-        PhaseTracker.getCauseStackManager().pushCause(source);
+        PhaseTracker.getInstance().pushCause(source);
         List<SlotTransaction> slotTransactions = captureSource.bridge$getCapturedSlotTransactions();
 
         sourceStack = sourceStack.copy();
@@ -336,11 +331,11 @@ public class InventoryEventFactory {
         }
 
         final TransferInventoryEvent.Post event =
-                SpongeEventFactory.createTransferInventoryEventPost(PhaseTracker.getCauseStackManager().currentCause(),
+                SpongeEventFactory.createTransferInventoryEventPost(PhaseTracker.getInstance().currentCause(),
                         source, sourceSlot, destination, targetSlot, transferredStack);
         SpongeCommon.post(event);
         slotTransactions.clear();
-        PhaseTracker.getCauseStackManager().popCause();
+        PhaseTracker.getInstance().popCause();
     }
 
 
@@ -405,7 +400,7 @@ public class InventoryEventFactory {
     public static UpdateAnvilEvent callUpdateAnvilEvent(final AnvilMenu anvil, final ItemStack slot1, final ItemStack slot2, final ItemStack result, final String name, final int levelCost, final int materialCost) {
         final Transaction<ItemStackSnapshot> transaction = new Transaction<>(ItemStackSnapshot.empty(), ItemStackUtil.snapshotOf(result));
         final UpdateAnvilEventCost costs = new UpdateAnvilEventCost(levelCost, materialCost);
-        final UpdateAnvilEvent event = SpongeEventFactory.createUpdateAnvilEvent(PhaseTracker.getCauseStackManager().currentCause(),
+        final UpdateAnvilEvent event = SpongeEventFactory.createUpdateAnvilEvent(PhaseTracker.getInstance().currentCause(),
                 new Transaction<>(costs, costs), (Inventory)anvil, name, ItemStackUtil.snapshotOf(slot1), transaction, ItemStackUtil.snapshotOf(slot2));
         SpongeCommon.post(event);
         return event;
@@ -414,7 +409,7 @@ public class InventoryEventFactory {
     public static ChangeEntityEquipmentEvent callChangeEntityEquipmentEvent(
             final LivingEntity entity, final ItemStackSnapshot before, final ItemStackSnapshot after, final Slot slot) {
         final ChangeEntityEquipmentEvent event;
-        try (final CauseStackManager.StackFrame frame = PhaseTracker.getCauseStackManager().pushCauseFrame()) {
+        try (final CauseStackManager.StackFrame frame = PhaseTracker.getInstance().pushCauseFrame()) {
             frame.pushCause(entity);
             final Transaction<ItemStackSnapshot> transaction = new Transaction<>(before, after);
             if (after.isEmpty()) {
@@ -436,7 +431,7 @@ public class InventoryEventFactory {
         Transaction<ItemStackSnapshot> cursorTrans = new Transaction<>(cursor, cursor);
 
         EnchantItemEvent.CalculateLevelRequirement event =
-                SpongeEventFactory.createEnchantItemEventCalculateLevelRequirement(PhaseTracker.getCauseStackManager().currentCause(),
+                SpongeEventFactory.createEnchantItemEventCalculateLevelRequirement(PhaseTracker.getInstance().currentCause(),
                         levelRequirement, levelRequirement, enchantContainer, cursorTrans, ItemStackUtil.snapshotOf(itemStack), option, power, seed);
 
         SpongeCommon.post(event);
@@ -456,7 +451,7 @@ public class InventoryEventFactory {
         Transaction<ItemStackSnapshot> cursorTrans = new Transaction<>(cursor, cursor);
 
         EnchantItemEvent.CalculateEnchantment event =
-                SpongeEventFactory.createEnchantItemEventCalculateEnchantment(PhaseTracker.getCauseStackManager().currentCause(),
+                SpongeEventFactory.createEnchantItemEventCalculateEnchantment(PhaseTracker.getInstance().currentCause(),
                         enchList, enchList, enchantContainer, cursorTrans, ItemStackUtil.snapshotOf(itemStack), level, option, seed);
 
         SpongeCommon.post(event);
@@ -480,7 +475,7 @@ public class InventoryEventFactory {
         slotTrans.add(enchantedItem);
 
         EnchantItemEvent.Post event =
-                SpongeEventFactory.createEnchantItemEventPost(PhaseTracker.getCauseStackManager().currentCause(), enchantContainer,
+                SpongeEventFactory.createEnchantItemEventPost(PhaseTracker.getInstance().currentCause(), enchantContainer,
                         cursorTrans, enchantedItem.slot(), Optional.empty(),slotTrans, option, seed);
 
         SpongeCommon.post(event);

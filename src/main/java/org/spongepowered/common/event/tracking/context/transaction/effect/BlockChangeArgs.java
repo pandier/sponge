@@ -22,24 +22,15 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-package org.spongepowered.common.mixin.tracker.world.ticks;
+package org.spongepowered.common.event.tracking.context.transaction.effect;
 
-import net.minecraft.world.ticks.ScheduledTick;
-import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.common.bridge.world.ticks.ScheduledTickBridge;
+import net.minecraft.world.level.block.state.BlockState;
+import org.spongepowered.common.world.SpongeBlockChangeFlag;
 
-@Mixin(ScheduledTick.class)
-public abstract class ScheduledTickMixin_Tracker implements ScheduledTickBridge {
+public record BlockChangeArgs(
+    BlockState newState,
+    SpongeBlockChangeFlag flag,
+    int limit
+) implements ProcessingSideEffect.Args {
 
-    private boolean tracker$isWorldGen = false;
-
-    @Override
-    public boolean bridge$isPartOfWorldGeneration() {
-        return this.tracker$isWorldGen;
-    }
-
-    @Override
-    public void bridge$setIsPartOfWorldGeneration(final boolean isLoading) {
-        this.tracker$isWorldGen = isLoading;
-    }
 }

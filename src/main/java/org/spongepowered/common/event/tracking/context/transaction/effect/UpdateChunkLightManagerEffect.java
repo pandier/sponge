@@ -24,17 +24,19 @@
  */
 package org.spongepowered.common.event.tracking.context.transaction.effect;
 
+import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.spongepowered.common.event.tracking.context.transaction.pipeline.BlockPipeline;
 import org.spongepowered.common.event.tracking.context.transaction.pipeline.PipelineCursor;
-import org.spongepowered.common.world.SpongeBlockChangeFlag;
 
-public final class UpdateChunkLightManagerEffect implements ProcessingSideEffect {
+public final class UpdateChunkLightManagerEffect implements ProcessingSideEffect<BlockPipeline, PipelineCursor, BlockChangeArgs, BlockState> {
 
     private static final class Holder {
         static final UpdateChunkLightManagerEffect INSTANCE = new UpdateChunkLightManagerEffect();
     }
+
     private UpdateChunkLightManagerEffect() {
     }
 
@@ -43,16 +45,32 @@ public final class UpdateChunkLightManagerEffect implements ProcessingSideEffect
     }
 
     @Override
-    public EffectResult processSideEffect(final BlockPipeline pipeline, final PipelineCursor oldState, final BlockState newState,
-        final SpongeBlockChangeFlag flag,
-        final int limit
+    public EffectResult<@Nullable BlockState> processSideEffect(
+        final BlockPipeline pipeline, final PipelineCursor oldState, final BlockChangeArgs args
     ) {
+        /*
+        Continuing from LevelChunk.setBlockState
+
+        boolean $$11 = $$4.hasOnlyAir();
+        if ($$5 != $$11) {
+            this.level.getChunkSource().getLightEngine().updateSectionStatus($$0, $$11);
+            this.level.getChunkSource().onSectionEmptinessChanged(this.chunkPos.x, SectionPos.blockToSectionCoord($$3), this.chunkPos.z, $$11);
+        }
+
+         */
+        final var chunk = pipeline.getAffectedChunk();
+        final var blockY = oldState.pos().getY();
         final LevelChunkSection chunkSection = pipeline.getAffectedSection();
         final boolean wasEmpty = pipeline.wasEmpty();
         final boolean isStillEmpty = chunkSection.hasOnlyAir();
         if (wasEmpty != isStillEmpty) {
-            pipeline.getServerWorld().getChunkSource().getLightEngine().updateSectionStatus(oldState.pos(), isStillEmpty);
+            final var source = pipeline.getServerWorld().getChunkSource();
+            source.getLightEngine().updateSectionStatus(oldState.pos(), isStillEmpty);
+            final var sectionPos = SectionPos.blockToSectionCoord(blockY);
+            final var chunkX = chunk.getPos().x;
+            final var chunkZ = chunk.getPos().z;
+            source.onSectionEmptinessChanged(chunkX, sectionPos, chunkZ, isStillEmpty);
         }
-        return EffectResult.NULL_PASS;
+        return EffectResult.nullPass();
     }
 }
