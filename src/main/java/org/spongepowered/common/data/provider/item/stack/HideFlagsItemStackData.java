@@ -77,7 +77,7 @@ public final class HideFlagsItemStackData {
                         .get(h -> h.has(DataComponents.UNBREAKABLE) && !h.get(DataComponents.UNBREAKABLE).showInTooltip())
                         .set((h, v) -> {
                             if (h.has(DataComponents.UNBREAKABLE)) {
-                                h.set(DataComponents.UNBREAKABLE, new Unbreakable(v));
+                                h.set(DataComponents.UNBREAKABLE, new Unbreakable(!v));
                             } // else TODO not supported?
                         })
                     .create(Keys.HIDE_TOOLTIP)
