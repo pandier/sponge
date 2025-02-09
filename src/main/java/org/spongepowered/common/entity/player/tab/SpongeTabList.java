@@ -245,26 +245,12 @@ public final class SpongeTabList implements TabList {
         return filteredPacket;
     }
 
-    public @Nullable ClientboundPlayerInfoRemovePacket updateEntriesOnSend(final ClientboundPlayerInfoRemovePacket packet) {
-        @MonotonicNonNull List<UUID> filteredProfileIds = null;
+    public ClientboundPlayerInfoRemovePacket updateEntriesOnSend(final ClientboundPlayerInfoRemovePacket packet) {
         for (int i = 0; i < packet.profileIds().size(); i++) {
             final UUID uniqueId = packet.profileIds().get(i);
-            final TabListEntry entry = this.entries.remove(uniqueId);
-            if (entry != null) {
-                if (filteredProfileIds != null) {
-                    filteredProfileIds.add(uniqueId);
-                }
-            } else if (filteredProfileIds == null) {
-                if (packet.profileIds().size() == 1) {
-                    return null;
-                }
-                filteredProfileIds = new ArrayList<>(packet.profileIds().subList(0, i));
-            }
+            this.entries.remove(uniqueId);
         }
-        if (filteredProfileIds == null) {
-            return packet;
-        }
-        return new ClientboundPlayerInfoRemovePacket(filteredProfileIds);
+        return packet;
     }
 
     @Override
