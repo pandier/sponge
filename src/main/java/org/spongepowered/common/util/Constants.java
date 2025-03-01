@@ -755,6 +755,11 @@ public final class Constants {
             public static final int CHILD = -24000;
         }
 
+        public static final class Arrow {
+
+            public static final int MAGIC_NO_DESPAWN = Integer.MIN_VALUE;
+        }
+
         public static final class Boat {
 
             public static final String BOAT_MAX_SPEED = "maxSpeed";

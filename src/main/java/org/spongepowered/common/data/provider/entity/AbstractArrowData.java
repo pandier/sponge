@@ -29,6 +29,8 @@ import org.spongepowered.api.data.Keys;
 import org.spongepowered.api.data.type.PickupRule;
 import org.spongepowered.common.bridge.world.entity.projectile.AbstractArrowBridge;
 import org.spongepowered.common.data.provider.DataProviderRegistrator;
+import org.spongepowered.common.util.Constants;
+import org.spongepowered.common.util.SpongeTicks;
 
 public final class AbstractArrowData {
 
@@ -45,6 +47,16 @@ public final class AbstractArrowData {
                     .create(Keys.IS_CRITICAL_HIT)
                         .get(AbstractArrow::isCritArrow)
                         .set(AbstractArrow::setCritArrow)
+                    .create(Keys.DESPAWN_DELAY)
+                        .get(h -> SpongeTicks.ticksOrInfinite(((AbstractArrowBridge) h).bridge$getDespawnDelay(), Constants.Entity.Arrow.MAGIC_NO_DESPAWN))
+                        .setAnd((h, v) -> {
+                            final int ticks = SpongeTicks.toSaturatedIntOrInfinite(v, Constants.Entity.Arrow.MAGIC_NO_DESPAWN);
+                            if (!v.isInfinite() && ticks < 0) {
+                                return false;
+                            }
+                            ((AbstractArrowBridge) h).bridge$setDespawnDelay(ticks);
+                            return true;
+                        })
                     .create(Keys.KNOCKBACK_STRENGTH)
                         // TODO calculating the knockback strength now requires the target entity and damage source
                         .get(h -> ((AbstractArrowBridge) h).bridge$getKnockback())

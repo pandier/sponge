@@ -30,4 +30,6 @@ public interface AbstractArrowBridge {
 
     double bridge$getKnockback();
     void bridge$setKnockback(@Nullable Double knockback);
+    void bridge$setDespawnDelay(int delay);
+    int bridge$getDespawnDelay();
 }

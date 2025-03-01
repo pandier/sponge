@@ -45,6 +45,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.common.bridge.world.entity.projectile.AbstractArrowBridge;
 import org.spongepowered.common.bridge.world.level.LevelBridge;
 import org.spongepowered.common.event.SpongeCommonEventFactory;
+import org.spongepowered.common.util.Constants;
 
 @Mixin(AbstractArrow.class)
 public abstract class AbstractArrowMixin extends ProjectileMixin implements AbstractArrowBridge {
@@ -70,6 +71,17 @@ public abstract class AbstractArrowMixin extends ProjectileMixin implements Abst
     @Nullable public ProjectileSource projectileSource;
 
     @Override
+    public void bridge$setDespawnDelay(int delay) {
+        if (delay < 0 && delay != Constants.Entity.Arrow.MAGIC_NO_DESPAWN) return;
+        this.life = delay;
+    }
+
+    @Override
+    public int bridge$getDespawnDelay() {
+        return this.life;
+    }
+
+    @Override
     public double bridge$getKnockback() {
         if (this.impl$customKnockback != null) {
             return this.impl$customKnockback;
@@ -80,6 +92,16 @@ public abstract class AbstractArrowMixin extends ProjectileMixin implements Abst
     @Override
     public void bridge$setKnockback(@Nullable final Double knockback) {
         this.impl$customKnockback = knockback;
+    }
+
+    /**
+     * Don't tick despawn if the delay is set to infinite.
+     */
+    @Inject(method = "tickDespawn", at = @At("HEAD"), cancellable = true)
+    private void tickDespawn(final CallbackInfo ci) {
+        if (this.life == Constants.Entity.Arrow.MAGIC_NO_DESPAWN) {
+            ci.cancel();
+        }
     }
 
     /**
